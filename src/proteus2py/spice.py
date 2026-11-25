@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from . import library
+from .errors import SpiceError
 from .sdf import spice_number
-
-
-class SpiceError(ValueError):
-    pass
 
 
 def _clean(text: str) -> list[str]:
@@ -90,7 +90,7 @@ def _group(tok: str) -> list[str]:
 
 
 class Deck:
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
         self.params: dict[str, float] = {}
         self.models: dict[str, tuple[str, dict[str, str]]] = {}
         self.subckts: dict[str, tuple[list[str], dict[str, str], list[str]]] = {}
@@ -125,14 +125,14 @@ class Deck:
                 self._top(ln)
             i += 1
 
-    def _model(self, ln: str):
+    def _model(self, ln: str) -> None:
         m = re.match(r"\.model\s+(\S+)\s+(\w+)\s*\(?(.*?)\)?\s*$", ln, re.I)
         if not m:
             raise SpiceError(f"bad .MODEL: {ln}")
         self.model_lines.append(ln)
         self.models[m.group(1).lower()] = (m.group(2).upper(), dict((k.upper(), v) for k, v in re.findall(r"(\w+)\s*=\s*([^\s,()]+)", m.group(3))))
 
-    def _top(self, ln: str):
+    def _top(self, ln: str) -> None:
         low = ln.lower()
         t = _split(ln)
         if low.startswith(".model"):
@@ -183,7 +183,7 @@ class Deck:
             self.main.append(ln)
 
 
-def _source(toks: list[str], params) -> dict:
+def _source(toks: list[str], params: dict[str, float]) -> dict[str, Any]:
     """Tokens after the node names of a V/I source -> {value, wave, ac}."""
     out: dict = {"value": 0.0}
     i = 0
@@ -225,200 +225,297 @@ def _source(toks: list[str], params) -> dict:
     return out
 
 
-KNOWN_PRIMARY = {"r", "c", "l", "v", "i", "d", "q", "j", "m", "e", "g", "x"}
+Params = dict[str, float]
+NodeMap = Callable[[str], str]
 
 
-def parse(text: str, native: bool = True) -> dict:
-    """native=True keeps X subcircuits as SPICE text for ProSPICE's own parser (F/H/B/K inside subcircuits work);
-    native=False flattens them here (fallback)."""
-    d = Deck(text)
-    used_subckts: dict[str, str] = {}
-    parts: list[dict] = []
-    models: dict[str, dict] = {}
+@dataclass
+class Elem:
+    """One element line being translated."""
+    name: str
+    ref: str
+    pos: list[str]
+    kv: dict[str, str]
+    toks: list[str]
+    nmap: NodeMap
+    params: Params
+    prefix: str
+    depth: int
 
-    def need_model(name: str, kind_hint: str | None = None):
+    def nodes(self, n: int, start: int = 0) -> list[str]:
+        if len(self.pos) < start + n:
+            raise SpiceError(f"{self.name}: needs {n} nodes")
+        return [self.nmap(x) for x in self.pos[start:start + n]]
+
+
+Handler = Callable[["Translator", Elem], None]
+ELEMENTS: dict[str, Handler] = {}
+
+
+def spice_element(*letters: str) -> Callable[[Handler], Handler]:
+    """Register the translator for SPICE element letters (lower case)."""
+    def deco(fn: Handler) -> Handler:
+        for ch in letters:
+            ELEMENTS[ch] = fn
+        return fn
+    return deco
+
+
+class Translator:
+    """Deck -> circuit spec dict. `native=True` keeps X subcircuits as SPICE text for ProSPICE's parser (F/H/B/K inside work);
+    `native=False` flattens them here (fallback)."""
+
+    def __init__(self, deck: Deck, native: bool = True) -> None:
+        self.d = deck
+        self.native = native
+        self.parts: list[dict[str, Any]] = []
+        self.models: dict[str, dict[str, Any]] = {}
+        self.subckts: dict[str, str] = {}
+
+    def need_model(self, name: str) -> dict[str, Any]:
         k = name.lower()
-        if k in d.models:
-            t, p = d.models[k]
-            models[name] = {"type": t, "params": p}
+        if k in self.d.models:
+            t, p = self.d.models[k]
+            self.models[name] = {"type": t, "params": p}
         else:
             lm = library.resolve(name)
             if lm is None:
                 raise SpiceError(f"model {name!r} not defined in the deck and not found in the Proteus libraries")
-            models[name] = {"type": lm[0], "params": lm[1]}
+            self.models[name] = {"type": lm[0], "params": lm[1]}
+        return self.models[name]
 
-    def element(ln: str, prefix: str, nmap, params: dict[str, float], depth=0):
+    def element(self, ln: str, prefix: str, nmap: NodeMap, params: Params, depth: int = 0) -> None:
         t = _split(ln)
-        name = t[0]
-        ref = prefix + name
         pos, kv = _kv(t[1:])
-        kind = name[0].lower()
+        handler = ELEMENTS.get(t[0][0].lower())
+        if handler is None:
+            raise SpiceError(f"{t[0]}: unknown element letter {t[0][0]!r}")
+        handler(self, Elem(t[0], prefix + t[0], pos, kv, t, nmap, params, prefix, depth))
 
-        def N(x):
-            return nmap(x)
-        if kind in "rcl":
-            if len(pos) < 3:
-                raise SpiceError(f"{name}: needs 2 nodes and a value")
-            val = next((evaluate(x, params) for x in pos[2:] if re.match(r"[-+.\d{'(]", x)), None)
-            if val is None:
-                raise SpiceError(f"{name}: no value")
-            p = {"ref": ref, "kind": kind.upper(), "nodes": [N(pos[0]), N(pos[1])], "value": val}
-            if "ic" in kv:
-                p["ic"] = evaluate(kv["ic"], params)
-            parts.append(p)
-        elif kind in "vi":
-            if len(pos) < 2:
-                raise SpiceError(f"{name}: needs 2 nodes")
-            src = _source(t[3:], params)
-            p = {"ref": ref, "kind": kind.upper(), "nodes": [N(pos[0]), N(pos[1])], "value": src["value"]}
-            if "wave" in src:
-                p["wave"] = src["wave"]
-            if src.get("ac"):
-                p["ac"] = True
-            parts.append(p)
-        elif kind == "d":
-            need_model(pos[2])
-            parts.append({"ref": ref, "kind": "D", "nodes": [N(pos[0]), N(pos[1])], "model": pos[2]})
-        elif kind == "q":
-            mi = 4 if len(pos) >= 5 and (pos[4].lower() in d.models or library.resolve(pos[4])) else 3
-            need_model(pos[mi])
-            mt = models[pos[mi]]["type"]
-            q = {"ref": ref, "kind": "QP" if mt == "PNP" else "Q", "nodes": [N(x) for x in pos[:3]], "model": pos[mi]}
-            if any(x.lower() == "off" for x in pos[mi + 1:]):
-                q["params"] = {"OFF": "TRUE"}
-            parts.append(q)
-        elif kind == "j":
-            need_model(pos[3])
-            mt = models[pos[3]]["type"]
-            parts.append({"ref": ref, "kind": "JP" if mt == "PJF" else "J", "nodes": [N(x) for x in pos[:3]], "model": pos[3]})
-        elif kind == "m":
-            need_model(pos[4])
-            mt = models[pos[4]]["type"]
-            parts.append({"ref": ref, "kind": "MP" if mt == "PMOS" else "M", "nodes": [N(x) for x in pos[:4]], "model": pos[4],
-                          "params": {k.upper(): evaluate(v, params) for k, v in kv.items() if k in ("w", "l", "as", "ad", "ps", "pd")}})
-        elif kind in "eg":
-            if len(pos) < 5:
-                raise SpiceError(f"{name}: only 'n+ n- nc+ nc- gain' form is supported")
-            parts.append({"ref": ref, "kind": kind.upper(), "nodes": [N(x) for x in pos[:4]], "value": evaluate(pos[4], params)})
-        elif kind == "x" and native and depth == 0:
-            sub = pos[-1].lower()
-            if sub not in d.subckts:
-                txt = library.get(pos[-1])
-                if txt is None or ".subckt" not in txt.lower():
-                    raise SpiceError(f"{name}: subcircuit {pos[-1]!r} not defined and not in the Proteus libraries")
-            else:
-                ports, defaults, body = d.subckts[sub]
-                header = ".SUBCKT " + d.subckt_names[sub] + " " + " ".join(ports) + ((" PARAMS: " + " ".join(f"{k}={v}" for k, v in defaults.items())) if defaults else "")
-                used_subckts[d.subckt_names[sub]] = "\n".join([header, *body, ".ENDS"])
-            parts.append({"ref": ref, "kind": "X", "nodes": [N(x) for x in pos[:-1]], "subckt": d.subckt_names.get(sub, pos[-1])})
-        elif kind == "x":
-            sub = pos[-1].lower()
-            actual = pos[:-1]
-            ps = {k: evaluate(v, params) for k, v in kv.items()}
-            if sub not in d.subckts:
-                txt = library.get(pos[-1])
-                if txt is None or ".subckt" not in txt.lower():
-                    raise SpiceError(f"{name}: subcircuit {pos[-1]!r} not defined and not in the Proteus libraries")
-                sd = Deck(txt)
-                d.subckts.update(sd.subckts)
-                for k, v in sd.models.items():
-                    d.models.setdefault(k, v)
-                if sub not in d.subckts:
-                    raise SpiceError(f"{name}: library entry {pos[-1]!r} has no .SUBCKT")
-            ports, defaults, body = d.subckts[sub]
-            if len(ports) != len(actual):
-                raise SpiceError(f"{name}: {pos[-1]} has {len(ports)} ports, got {len(actual)} nodes")
-            if depth > 12:
-                raise SpiceError("subcircuit nesting too deep")
-            local = dict(params)
-            for k, v in defaults.items():
-                local[k.lower()] = evaluate(v, local)
-            local.update({k.lower(): v for k, v in ps.items()})
-            mapping = {p.lower(): N(a) for p, a in zip(ports, actual)}
+    def run(self) -> dict[str, Any]:
+        d = self.d
+        for ln in d.main:
+            self.element(ln, "", lambda x: "0" if x == "0" or x.lower() == "gnd" else x, d.params)
+        spec: dict[str, Any] = {"title": d.title or "spice deck", "parts": self.parts, "models": self.models}
+        if self.subckts:
+            spec["subckts"] = self.subckts
+            spec["spice_text"] = "\n".join(d.model_lines)
+        if d.temp is not None:
+            spec["temp"] = d.temp
+        if d.options:
+            spec["options_raw"] = d.options
+        spec["analyses"] = d.analyses
+        spec["analysis"] = d.analyses[0] if d.analyses else {"type": "op"}
+        nodes: list[str] = []
+        for p in self.parts:
+            for n in p.get("nodes", []):
+                if n != "0" and n not in nodes:
+                    nodes.append(n)
+        spec["probes"] = d.probes or [f"v({n})" for n in nodes if "." not in n]
+        return spec
 
-            def sub_nmap(x, mapping=mapping, pre=ref + "."):
-                if x == "0":
-                    return "0"
-                return mapping.get(x.lower(), pre + x)
-            for bl in body:
-                if bl.lower().startswith(".param"):
-                    for tok in _split(bl)[1:]:
-                        if "=" in tok:
-                            k, v = tok.split("=", 1)
-                            local[k.lower()] = evaluate(v, local)
-                elif bl.startswith("."):
-                    continue
-                else:
-                    element(bl, ref + ".", sub_nmap, local, depth + 1)
-        elif kind in "fh":
-            if len(pos) < 4:
-                raise SpiceError(f"{name}: needs 'n+ n- Vcontrol gain'")
-            parts.append({"ref": ref, "kind": kind.upper(), "nodes": [N(pos[0]), N(pos[1])], "control": prefix + pos[2], "value": evaluate(pos[3], params)})
-        elif kind == "k":
-            if len(pos) < 3:
-                raise SpiceError(f"{name}: needs 'L1 L2 k'")
-            parts.append({"ref": ref, "kind": "K", "inductors": [prefix + pos[0], prefix + pos[1]], "value": evaluate(pos[2], params)})
-        elif kind in "sb":
-            # switches and behavioural sources are expressed as one-element subcircuits that ProSPICE's own SPICE parser handles
-            if kind == "s":
-                if len(pos) < 5:
-                    raise SpiceError(f"{name}: needs 'n+ n- nc+ nc- model'")
-                mdl = next((m for m in d.model_lines if re.match(rf"\.model\s+{re.escape(pos[4])}\s", m, re.I)), None)
-                if mdl is None:
-                    raise SpiceError(f"{name}: switch model {pos[4]!r} not defined in the deck")
-                nodes = [N(x) for x in pos[:4]]
-                sub = f"SW_{ref}".replace(".", "_")
-                body = f"S{name[1:]} p1 p2 p3 p4 {pos[4]} {' '.join(x for x in pos[5:] if x.lower() in ('on', 'off'))}\n{mdl}"
-                used_subckts[sub] = f".SUBCKT {sub} p1 p2 p3 p4\n{body}\n.ENDS"
-            else:
-                m = re.match(r"(?i)\s*([vi])\s*=\s*(.*)", " ".join(t[3:]))
-                if len(pos) < 2 or not m:
-                    raise SpiceError(f"{name}: only 'B n+ n- V={{expr}}' / 'I={{expr}}' is supported")
-                expr = m.group(2).strip().strip("{}'\"")
-                if re.search(r"(?i)\bi\s*\(", expr):
-                    raise SpiceError(f"{name}: i(...) inside a behavioural source cannot cross the subcircuit boundary")
-                nets: list[str] = []
 
-                def port(mm):
-                    names = [x.strip() for x in mm.group(1).split(",")]
-                    ps = []
-                    for x in names:
-                        x = "0" if x.lower() in ("0", "gnd") else x
-                        if x == "0":
-                            ps.append("0")
-                            continue
-                        if x not in nets:
-                            nets.append(x)
-                        ps.append(f"q{nets.index(x) + 1}")
-                    return "v(" + ",".join(ps) + ")"
-                expr2 = re.sub(r"(?i)\bv\(([^()]*)\)", port, expr)
-                nodes = [N(pos[0]), N(pos[1])] + [N(x) for x in nets]
-                sub = f"BS_{ref}".replace(".", "_")
-                ports = ["p1", "p2"] + [f"q{i + 1}" for i in range(len(nets))]
-                used_subckts[sub] = f".SUBCKT {sub} {' '.join(ports)}\nB{name[1:]} p1 p2 {m.group(1).upper()}={expr2}\n.ENDS"
-            parts.append({"ref": "X" + ref.replace(".", "_"), "kind": "X", "nodes": nodes, "subckt": sub})
-        elif kind in "w":
-            raise SpiceError(f"{name}: element type {kind.upper()} is not supported yet")
-        else:
-            raise SpiceError(f"{name}: unknown element letter {kind!r}")
+@spice_element("r", "c", "l")
+def _rcl(tr: Translator, e: Elem) -> None:
+    if len(e.pos) < 3:
+        raise SpiceError(f"{e.name}: needs 2 nodes and a value")
+    val = next((evaluate(x, e.params) for x in e.pos[2:] if re.match(r"[-+.\d{'(]", x)), None)
+    if val is None:
+        raise SpiceError(f"{e.name}: no value")
+    p: dict[str, Any] = {"ref": e.ref, "kind": e.name[0].upper(), "nodes": e.nodes(2), "value": val}
+    if "ic" in e.kv:
+        p["ic"] = evaluate(e.kv["ic"], e.params)
+    tr.parts.append(p)
 
-    for ln in d.main:
-        element(ln, "", lambda x: "0" if x == "0" or x.lower() in ("gnd",) else x, d.params)
 
-    spec: dict = {"title": d.title or "spice deck", "parts": parts, "models": models}
-    if used_subckts:
-        spec["subckts"] = used_subckts
-        spec["spice_text"] = "\n".join(d.model_lines)
-    if d.temp is not None:
-        spec["temp"] = d.temp
-    if d.options:
-        spec["options_raw"] = d.options
-    spec["analyses"] = d.analyses
-    spec["analysis"] = d.analyses[0] if d.analyses else {"type": "op"}
-    nodes: list[str] = []
-    for p in parts:
-        for n in p.get("nodes", []):
-            if n != "0" and n not in nodes:
-                nodes.append(n)
-    spec["probes"] = d.probes or [f"v({n})" for n in nodes if "." not in n]
-    return spec
+@spice_element("v", "i")
+def _source_element(tr: Translator, e: Elem) -> None:
+    src = _source(e.toks[3:], e.params)
+    p: dict[str, Any] = {"ref": e.ref, "kind": e.name[0].upper(), "nodes": e.nodes(2), "value": src["value"]}
+    if "wave" in src:
+        p["wave"] = src["wave"]
+    if src.get("ac"):
+        p["ac"] = True
+    tr.parts.append(p)
+
+
+@spice_element("d")
+def _diode(tr: Translator, e: Elem) -> None:
+    tr.need_model(e.pos[2])
+    tr.parts.append({"ref": e.ref, "kind": "D", "nodes": e.nodes(2), "model": e.pos[2]})
+
+
+@spice_element("q")
+def _bjt(tr: Translator, e: Elem) -> None:
+    mi = 4 if len(e.pos) >= 5 and (e.pos[4].lower() in tr.d.models or library.resolve(e.pos[4])) else 3
+    mt = tr.need_model(e.pos[mi])["type"]
+    q: dict[str, Any] = {"ref": e.ref, "kind": "QP" if mt == "PNP" else "Q", "nodes": e.nodes(3), "model": e.pos[mi]}
+    if any(x.lower() == "off" for x in e.pos[mi + 1:]):
+        q["params"] = {"OFF": "TRUE"}
+    tr.parts.append(q)
+
+
+@spice_element("j")
+def _jfet(tr: Translator, e: Elem) -> None:
+    mt = tr.need_model(e.pos[3])["type"]
+    tr.parts.append({"ref": e.ref, "kind": "JP" if mt == "PJF" else "J", "nodes": e.nodes(3), "model": e.pos[3]})
+
+
+@spice_element("m")
+def _mosfet(tr: Translator, e: Elem) -> None:
+    mt = tr.need_model(e.pos[4])["type"]
+    tr.parts.append({"ref": e.ref, "kind": "MP" if mt == "PMOS" else "M", "nodes": e.nodes(4), "model": e.pos[4],
+                     "params": {k.upper(): evaluate(v, e.params) for k, v in e.kv.items() if k in ("w", "l", "as", "ad", "ps", "pd")}})
+
+
+@spice_element("e", "g")
+def _controlled(tr: Translator, e: Elem) -> None:
+    if len(e.pos) < 5:
+        raise SpiceError(f"{e.name}: only 'n+ n- nc+ nc- gain' form is supported")
+    tr.parts.append({"ref": e.ref, "kind": e.name[0].upper(), "nodes": e.nodes(4), "value": evaluate(e.pos[4], e.params)})
+
+
+@spice_element("f", "h")
+def _current_controlled(tr: Translator, e: Elem) -> None:
+    if len(e.pos) < 4:
+        raise SpiceError(f"{e.name}: needs 'n+ n- Vcontrol gain'")
+    tr.parts.append({"ref": e.ref, "kind": e.name[0].upper(), "nodes": e.nodes(2), "control": e.prefix + e.pos[2], "value": evaluate(e.pos[3], e.params)})
+
+
+@spice_element("k")
+def _mutual(tr: Translator, e: Elem) -> None:
+    if len(e.pos) < 3:
+        raise SpiceError(f"{e.name}: needs 'L1 L2 k'")
+    tr.parts.append({"ref": e.ref, "kind": "K", "inductors": [e.prefix + e.pos[0], e.prefix + e.pos[1]], "value": evaluate(e.pos[2], e.params)})
+
+
+def _clean_name(x: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", x)
+
+
+def _wrap(tr: Translator, e: Elem, sub: str, ports: int, body: str, nodes: list[str]) -> None:
+    """One-element subcircuit (ProSPICE's own SPICE parser handles S, B ...)."""
+    tr.subckts[sub] = f".SUBCKT {sub} {' '.join(f'p{i + 1}' for i in range(ports))}\n{body}\n.ENDS"
+    tr.parts.append({"ref": "X" + e.ref.replace(".", "_"), "kind": "X", "nodes": nodes, "subckt": sub})
+
+
+def _model_line(tr: Translator, e: Elem, name: str) -> str:
+    mdl = next((m for m in tr.d.model_lines if re.match(rf"\.model\s+{re.escape(name)}\s", m, re.I)), None)
+    if mdl is None:
+        raise SpiceError(f"{e.name}: model {name!r} not defined in the deck")
+    return mdl
+
+
+@spice_element("s")
+def _vswitch(tr: Translator, e: Elem) -> None:
+    if len(e.pos) < 5:
+        raise SpiceError(f"{e.name}: needs 'n+ n- nc+ nc- model'")
+    sub = f"SW_{e.ref}".replace(".", "_")
+    flags = " ".join(x for x in e.pos[5:] if x.lower() in ("on", "off"))
+    _wrap(tr, e, sub, 4, f"S{e.name[1:]} p1 p2 p3 p4 {e.pos[4]} {flags}\n{_model_line(tr, e, e.pos[4])}", e.nodes(4))
+
+
+@spice_element("w")
+def _cswitch(tr: Translator, e: Elem) -> None:
+    """Current-controlled switch: sense the control current with a 1 ohm transresistance (H) and switch on that voltage (S)."""
+    if len(e.pos) < 4:
+        raise SpiceError(f"{e.name}: needs 'n+ n- Vcontrol model'")
+    mline = _model_line(tr, e, e.pos[3])
+    m = re.match(r"\.model\s+\S+\s+\w+\s*\(?(.*?)\)?\s*$", mline, re.I)
+    kv = {k.lower(): v for k, v in re.findall(r"(\w+)\s*=\s*([^\s,()]+)", m.group(1) if m else "")}
+    sw = f".model {e.pos[3]}_s SW(vt={kv.get('it', '0')} vh={kv.get('ih', '0')} ron={kv.get('ron', '1')} roff={kv.get('roff', '1e6')})"
+    sense = "sense" + _clean_name(e.ref)                      # no '_' in H refs: ProSPICE reads "<prefix>_" as a subcircuit prefix
+    tr.parts.append({"ref": f"HS{_clean_name(e.ref)}", "kind": "H", "nodes": [sense, "0"], "control": e.prefix + e.pos[2], "value": 1})
+    sub = f"CSW_{e.ref}".replace(".", "_")
+    _wrap(tr, e, sub, 4, f"S{e.name[1:]} p1 p2 p3 0 {e.pos[3]}_s\n{sw}", [*e.nodes(2), sense, "0"])
+
+
+_BEXPR = re.compile(r"(?i)\s*([vi])\s*=\s*(.*)")
+
+
+@spice_element("b")
+def _behavioural(tr: Translator, e: Elem) -> None:
+    m = _BEXPR.match(" ".join(e.toks[3:]))
+    if len(e.pos) < 2 or not m:
+        raise SpiceError(f"{e.name}: only 'B n+ n- V={{expr}}' / 'I={{expr}}' is supported")
+    expr = m.group(2).strip().strip("{}'\"")
+    nets: list[str] = []
+
+    def net(x: str) -> str:
+        x = "0" if x.lower() in ("0", "gnd") else x
+        if x == "0":
+            return "0"
+        if x not in nets:
+            nets.append(x)
+        return f"q{nets.index(x) + 1}"
+
+    holes: list[str] = []
+
+    def cur(mm: re.Match[str]) -> str:
+        """i(Vx) -> voltage of a 1 ohm CCVS that senses Vx's current (the subcircuit boundary hides Vx)."""
+        vname = e.prefix + mm.group(1).strip()
+        aux = "isense" + _clean_name(vname)
+        if not any(p["ref"] == f"HI{_clean_name(vname)}" for p in tr.parts):
+            tr.parts.append({"ref": f"HI{_clean_name(vname)}", "kind": "H", "nodes": [aux, "0"], "control": vname, "value": 1})
+        holes.append(net(e.nmap(aux)))
+        return f"@@{len(holes) - 1}@@"
+    expr = re.sub(r"(?i)\bi\(([^()]*)\)", cur, expr)
+    expr = re.sub(r"(?i)\bv\(([^()]*)\)", lambda mm: "v(" + ",".join(net(e.nmap(x.strip())) if x.strip() not in ("0", "gnd") else "0" for x in mm.group(1).split(",")) + ")", expr)
+    expr = re.sub(r"@@(\d+)@@", lambda mm: f"v({holes[int(mm.group(1))]})", expr)
+    sub = f"BS_{e.ref}".replace(".", "_")
+    ports = ["p1", "p2"] + [f"q{i + 1}" for i in range(len(nets))]
+    tr.subckts[sub] = f".SUBCKT {sub} {' '.join(ports)}\nB{e.name[1:]} p1 p2 {m.group(1).upper()}={expr}\n.ENDS"
+    tr.parts.append({"ref": "X" + e.ref.replace(".", "_"), "kind": "X", "nodes": [*e.nodes(2), *nets], "subckt": sub})
+
+
+@spice_element("x")
+def _subckt_call(tr: Translator, e: Elem) -> None:
+    d = tr.d
+    sub = e.pos[-1].lower()
+    actual = e.pos[:-1]
+    if sub not in d.subckts:
+        txt = library.get(e.pos[-1])
+        if txt is None or ".subckt" not in txt.lower():
+            raise SpiceError(f"{e.name}: subcircuit {e.pos[-1]!r} not defined and not in the Proteus libraries")
+        if tr.native and e.depth == 0:
+            tr.parts.append({"ref": e.ref, "kind": "X", "nodes": [e.nmap(x) for x in actual], "subckt": e.pos[-1]})
+            return
+        sd = Deck(txt)
+        d.subckts.update(sd.subckts)
+        d.subckt_names.update(sd.subckt_names)
+        for k, v in sd.models.items():
+            d.models.setdefault(k, v)
+        if sub not in d.subckts:
+            raise SpiceError(f"{e.name}: library entry {e.pos[-1]!r} has no .SUBCKT")
+    ports, defaults, body = d.subckts[sub]
+    if tr.native and e.depth == 0:
+        header = ".SUBCKT " + d.subckt_names[sub] + " " + " ".join(ports) + ((" PARAMS: " + " ".join(f"{k}={v}" for k, v in defaults.items())) if defaults else "")
+        tr.subckts[d.subckt_names[sub]] = "\n".join([header, *body, ".ENDS"])
+        tr.parts.append({"ref": e.ref, "kind": "X", "nodes": [e.nmap(x) for x in actual], "subckt": d.subckt_names[sub]})
+        return
+    if len(ports) != len(actual):
+        raise SpiceError(f"{e.name}: {e.pos[-1]} has {len(ports)} ports, got {len(actual)} nodes")
+    if e.depth > 12:
+        raise SpiceError("subcircuit nesting too deep")
+    local = dict(e.params)
+    for k, v in defaults.items():
+        local[k.lower()] = evaluate(v, local)
+    local.update({k.lower(): evaluate(v, e.params) for k, v in e.kv.items()})
+    mapping = {p.lower(): e.nmap(a) for p, a in zip(ports, actual)}
+    pre = e.ref + "."
+
+    def sub_nmap(x: str) -> str:
+        return "0" if x == "0" else mapping.get(x.lower(), pre + x)
+    for bl in body:
+        if bl.lower().startswith(".param"):
+            for tok in _split(bl)[1:]:
+                if "=" in tok:
+                    k, v = tok.split("=", 1)
+                    local[k.lower()] = evaluate(v, local)
+        elif not bl.startswith("."):
+            tr.element(bl, pre, sub_nmap, local, e.depth + 1)
+
+
+def parse(text: str, native: bool = True) -> dict[str, Any]:
+    """SPICE deck -> circuit spec dict (feed it to `circuit.build` / `sim.simulate`)."""
+    return Translator(Deck(text), native).run()

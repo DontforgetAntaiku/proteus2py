@@ -27,7 +27,7 @@ def stats(p: Probe) -> dict:
     return out
 
 
-def at(p: Probe, x: float):
+def at(p: Probe, x: float) -> float | complex:
     return p.at(x)
 
 
@@ -73,7 +73,7 @@ def bandwidth(p: Probe, ref: str = "first", drop_db: float = 3.0103) -> dict:
     g0 = rows[0]["db"] if ref == "first" else peak["db"]
     thr = g0 - drop_db
 
-    def cross(seq):
+    def cross(seq: list[dict[str, float]]) -> float | None:
         for a, b in zip(seq, seq[1:]):
             if (a["db"] - thr) * (b["db"] - thr) < 0:
                 t = (thr - a["db"]) / (b["db"] - a["db"])
@@ -94,7 +94,7 @@ def edge(p: Probe, lo: float = 0.1, hi: float = 0.9, after: float = 0.0) -> dict
         raise ValueError("no transition")
     a, b = y0 + lo * (y1 - y0), y0 + hi * (y1 - y0)
 
-    def t_at(level):
+    def t_at(level: float) -> float | None:
         for (xa, ya), (xb, yb) in zip(pts, pts[1:]):
             if (ya - level) * (yb - level) <= 0 and ya != yb:
                 return xa + (level - ya) / (yb - ya) * (xb - xa)

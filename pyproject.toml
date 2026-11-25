@@ -56,9 +56,9 @@ target-version = "py310"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["E701", "E702", "E731", "B905", "UP031", "B023", "B007"]
+select = ["E", "F", "W", "I", "B", "UP", "ANN"]
+ignore = ["E701", "E702", "E731", "B905", "UP031", "B023", "B007", "ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/proteus2py/_gen/*" = ["E", "F", "W", "I", "B", "UP"]
-"tests/*" = ["E402"]
+"src/proteus2py/_gen/*" = ["E", "F", "W", "I", "B", "UP", "ANN"]
+"tests/*" = ["E402", "ANN"]

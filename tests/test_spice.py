@@ -69,8 +69,8 @@ def test_subckt_native_keeps_text():
 
 
 def test_unsupported_elements_are_reported():
-    with pytest.raises(spice.SpiceError, match="not supported"):
-        spice.parse("t\nW1 a b VS SW\n")
+    with pytest.raises(spice.SpiceError, match="unknown element"):
+        spice.parse("t\nT1 a 0 b 0 TL\n")
     with pytest.raises(spice.SpiceError, match="host files"):
         spice.parse("t\n.include foo.lib\n")
 
@@ -78,3 +78,12 @@ def test_unsupported_elements_are_reported():
 def test_expressions():
     assert spice.evaluate("{2*1k + x}", {"x": 5}) == 2005
     assert spice.evaluate("'sqrt(4)'", {}) == 2
+
+
+def test_w_switch_and_b_current_are_translated():
+    s = spice.parse("t\nV1 a 0 1\nVS s 0 0\nR1 a s 1k\nW1 a out VS SWI\nRL out 0 1k\n.model SWI CSW(it=0.5m ih=0.1m ron=1 roff=1e6)\n"
+                    "B1 x 0 V=2000*i(VS)\nR2 x 0 1k\n.op\n")
+    kinds = [(p["ref"], p["kind"]) for p in s["parts"]]
+    assert any(k == "H" for _, k in kinds)
+    assert len([1 for p in s["parts"] if p["kind"] == "X"]) == 2
+    assert any(".SUBCKT CSW_W1" in t for t in s["subckts"].values()) and any("B1" in t for t in s["subckts"].values())

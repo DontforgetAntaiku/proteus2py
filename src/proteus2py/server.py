@@ -6,22 +6,25 @@ import json
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import gen, gui, prospice, session, sim, spice
 from . import workspace as ws
+from .models import MonteCarloResult, ProjectRunResult, SimResult, SweepResult
 
 mcp = MCPServer("proteus")
 
 
-def tool():
+def tool() -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """@tool() that reports every failure to the model (the SDK hides the text of non-ToolError exceptions)."""
-    def deco(fn):
+    def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(fn)
-        def inner(*a, **kw):
+        def inner(*a: Any, **kw: Any) -> Any:
             try:
                 return fn(*a, **kw)
             except ToolError:
@@ -84,7 +87,7 @@ def build_design(name: str, parts: list[dict], wires: list[dict]) -> dict:
 
 
 # ---- GUI (one-shot: Xvfb + Wine + Proteus live inside the sandbox only for the duration of ONE call) ------------------
-def _image(p: Path, trim: bool = True, crop: list[int] | None = None):
+def _image(p: Path, trim: bool = True, crop: list[int] | None = None) -> list[Any]:
     for _ in range(40):
         if p.exists():
             break
@@ -158,7 +161,7 @@ def gui_run(project: str, actions: list[dict], load_wait: float = 25) -> list:
 
 
 @tool()
-def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait: float = 25, graph: int | None = None) -> dict:
+def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait: float = 25, graph: int | None = None) -> ProjectRunResult:
     """Bridge GUI -> numbers: open a Proteus project, trigger its simulation (space = checked graph or `graph` #n, F12 = animated), capture the
     netlist(s) ISIS hands to ProSPICE, close everything, then re-run them headless. Each captured partition becomes a run `<name>_p0`,
     `<name>_p1`... usable with measure / derive / plot_run / sweep. A screenshot `<name>_graph.png` of Proteus's own graph is saved too."""
@@ -166,17 +169,17 @@ def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait:
         with session.once(name, load_wait) as s:
             files = s.capture_sdf(key, wait, tag=name, graph=graph)
             s.shot(f"{name}_graph")
-        runs = []
+        runs: list[SimResult | dict[str, Any]] = []
         for i, f in enumerate(files):
             try:
                 runs.append(sim.run_sdf(f, f"{name}_p{i}"))
             except Exception as e:                      # noqa: BLE001
                 runs.append({"name": f"{name}_p{i}", "error": str(e)[:300], "sdf": str(f)})
-        return {"captured": [str(f) for f in files], "runs": runs, "screenshot": str(ws.exchange() / f"{name}_graph.png")}
+        return ProjectRunResult(captured=[str(f) for f in files], runs=runs, screenshot=str(ws.exchange() / f"{name}_graph.png"))
 
 
 @tool()
-def run_sdf(sdf_name: str, name: str | None = None) -> dict:
+def run_sdf(sdf_name: str, name: str | None = None) -> SimResult:
     """Headless-run an ISIS SDF netlist already in the sandbox (e.g. a cap_<project>/LISA*.SDF from simulate_project) and decode it."""
     with _LOCK:
         p = next(iter(ws.exchange().rglob(sdf_name)), None)
@@ -195,7 +198,7 @@ def reset_sandbox() -> str:
 
 # ---- numeric simulation (headless PROSPICE, no GUI) ---------------------------------------------------------
 @tool()
-def simulate(spec: dict, name: str = "sim", max_rows: int = 40) -> dict:
+def simulate(spec: dict[str, Any], name: str = "sim", max_rows: int = 40) -> SimResult:
     """Simulate a circuit headless with Proteus's own engine (ProSPICE) and return numbers. Fast (~2 s), no GUI.
     spec = {"parts":[{"ref":"R1","kind":"R","nodes":["in","out"],"value":"1k"}, ...],
             "analysis": {"type":"op"} | {"type":"transient","tstop":"5m","tmax":"5u"} |
@@ -215,7 +218,7 @@ def simulate(spec: dict, name: str = "sim", max_rows: int = 40) -> dict:
 
 
 @tool()
-def simulate_spice(deck: str, name: str = "sim", analysis_index: int = 0, max_rows: int = 40) -> dict:
+def simulate_spice(deck: str, name: str = "sim", analysis_index: int = 0, max_rows: int = 40) -> SimResult:
     """Simulate a SPICE deck (R C L V I D Q J M E G X, .MODEL .SUBCKT .PARAM, .OP/.TRAN/.AC/.DC, .PRINT/.PROBE) with Proteus's
     engine. Library models/subcircuits (e.g. 2N3904, 1N4148, LM324, OP07 as X) are resolved from Proteus's libraries. SPICE number
     notation (m=milli, MEG=mega). Pick which analysis card to run with analysis_index. Not supported yet: F H K S W B, .INCLUDE."""
@@ -244,7 +247,7 @@ def derive(name: str, expr: str, points: int = 40) -> dict:
 
 
 @tool()
-def sweep(spec: dict, target: str, values: list, metric: dict, name: str = "sweep") -> dict:
+def sweep(spec: dict[str, Any], target: str, values: list[Any], metric: dict[str, Any], name: str = "sweep") -> SweepResult:
     """Parameter sweep: re-simulate `spec` for each value of `target` ("R1" = part value, "temp", "V1.wave.freq", "C1.value") and
     collect one number per run. metric: {"what":"stats","probe":"v(out)","field":"rms"} | {"what":"op","probe":"v(c)"} |
     {"what":"bandwidth","probe":"v(out)","field":"f_high_3db"} | {"what":"harmonics","probe":"v(out)","f0":1000,"field":"thd_pct"}."""
@@ -253,8 +256,8 @@ def sweep(spec: dict, target: str, values: list, metric: dict, name: str = "swee
 
 
 @tool()
-def monte_carlo(spec: dict, tolerances: dict, metric: dict, runs: int = 20, seed: int = 1, distribution: str = "gauss",
-                name: str = "mc") -> dict:
+def monte_carlo(spec: dict[str, Any], tolerances: dict[str, Any], metric: dict[str, Any], runs: int = 20, seed: int = 1, distribution: str = "gauss",
+                name: str = "mc") -> MonteCarloResult:
     """Monte Carlo over component tolerances: tolerances {"R1":"5%","C1":"10%"} (gauss: sigma = tol/3; uniform: +-tol).
     metric as in sweep(). Returns mean/std/min/max and every run."""
     with _LOCK:

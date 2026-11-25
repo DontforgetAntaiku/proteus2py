@@ -6,6 +6,7 @@ import queue
 import subprocess
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from . import workspace as ws
@@ -45,7 +46,7 @@ class SessionError(RuntimeError):
 
 
 class Session:
-    def __init__(self, name: str, start_timeout: int = 240, load_wait: float = 25):
+    def __init__(self, name: str, start_timeout: int = 240, load_wait: float = 25) -> None:
         self.name = ws.name_ok(name)
         if not ws.project(name).exists():
             raise FileNotFoundError(f"{ws.project(name)} not found")
@@ -162,7 +163,7 @@ class Session:
 
 
 @contextlib.contextmanager
-def once(name: str, load_wait: float = 25):
+def once(name: str, load_wait: float = 25) -> Iterator[Session]:
     """One-shot session: Xvfb + Wine + Proteus run only inside this block and are always torn down afterwards."""
     s = Session(name, load_wait=load_wait)
     try:

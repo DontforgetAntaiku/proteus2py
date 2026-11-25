@@ -42,7 +42,7 @@ KINDS = {
 }
 
 
-def num(x) -> str:
+def num(x: float | int | str | None) -> str:
     """Number or ISIS-notation string -> text for the netlist."""
     if isinstance(x, bool):
         raise TypeError("bool is not a value")
@@ -54,7 +54,7 @@ def num(x) -> str:
 _SPICE_MULT = {"t": 1e12, "g": 1e9, "meg": 1e6, "k": 1e3, "mil": 25.4e-6, "m": 1e-3, "u": 1e-6, "n": 1e-9, "p": 1e-12, "f": 1e-15}
 
 
-def spice_number(x) -> float:
+def spice_number(x: float | int | str) -> float:
     """SPICE notation (case-insensitive: M = milli, MEG = mega) -> float. Library .MODEL values use this."""
     import re
     if isinstance(x, (int, float)):

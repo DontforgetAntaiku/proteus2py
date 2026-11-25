@@ -61,13 +61,14 @@ def _spice(path: str, analysis: int, as_json: bool) -> int:
         spec["analysis"] = spec["analyses"][analysis]
     r = sim.simulate(spec, Path(path).stem)
     if as_json:
-        print(json.dumps(r, indent=1, default=str))
+        print(r.model_dump_json(indent=1, exclude_none=True))
         return 0
-    print(f"{r['analysis']}: {len(r['probes'])} probes, x = {r['x_range'][0]:g} .. {r['x_range'][1]:g}   csv: {r['csv']}")
+    print(f"{r.analysis}: {len(r.probes)} probes, x = {r.x_range[0]:g} .. {r.x_range[1]:g}   csv: {r.csv}")
     for key in ("op", "stats", "gain", "noise"):
-        if key in r:
-            print(json.dumps(r[key], indent=1, default=str))
-    for w in r["warnings"]:
+        v = getattr(r, key)
+        if v is not None:
+            print(json.dumps(v if isinstance(v, dict) else v.model_dump(), indent=1, default=lambda o: o.model_dump()))
+    for w in r.warnings:
         print("warning:", w)
     return 0
 

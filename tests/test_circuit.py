@@ -1,6 +1,7 @@
 import pytest
 
-from proteus2py import circuit
+from proteus2py import circuit, elements
+from proteus2py.models import CircuitSpec
 from proteus2py.sdf import Sdf
 
 
@@ -42,22 +43,24 @@ def test_spec_errors(bad, msg):
 
 
 def test_wave_names_map_to_isis_properties():
-    _, props = circuit._wave_props({"type": "pulse", "low": 0, "high": 5, "delay": "1m", "rise": "1u", "width": "2m", "freq": 100})
+    _, props = elements.wave_props({"type": "pulse", "low": 0, "high": 5, "delay": "1m", "rise": "1u", "width": "2m", "freq": 100})
     assert props == ["LOW=0", "HIGH=5", "TD=1m", "TR=1u", "PW=2m", "FREQ=100"]
 
 
 def test_model_params_are_converted_from_spice_notation():
-    mt, mp = circuit._resolve_model({"models": {"D": {"type": "D", "params": {"RS": "68.6M", "IS": "222P"}}}}, "D")
+    spec = CircuitSpec.model_validate({"parts": [{"ref": "R", "kind": "R", "nodes": ["a", "b"], "value": 1}],
+                                       "models": {"D": {"type": "D", "params": {"RS": "68.6M", "IS": "222P"}}}})
+    mt, mp = elements.resolve_model(spec, "D")
     assert mp["RS"] == pytest.approx(0.0686) and mp["IS"] == pytest.approx(2.22e-10)
 
 
 def test_k_groups_become_one_subcircuit():
-    spec = circuit._couple({"parts": [{"ref": "L1", "kind": "L", "nodes": ["a", "0"], "value": "10m"},
+    spec = circuit.couple(circuit.validate({"parts": [{"ref": "L1", "kind": "L", "nodes": ["a", "0"], "value": "10m"},
                                       {"ref": "L2", "kind": "L", "nodes": ["b", "0"], "value": "40m"},
                                       {"ref": "K1", "kind": "K", "inductors": ["L1", "L2"], "value": 0.99},
-                                      {"ref": "R1", "kind": "R", "nodes": ["a", "b"], "value": 1}]})
-    assert [p["ref"] for p in spec["parts"]] == ["R1", "XKGRP1"]
-    t = spec["subckts"]["KGRP1"]
+                                      {"ref": "R1", "kind": "R", "nodes": ["a", "b"], "value": 1}]}))
+    assert [p.ref for p in spec.parts] == ["R1", "XKGRP1"]
+    t = spec.subckts["KGRP1"]
     assert ".SUBCKT KGRP1 1 2 3 4" in t and "LL1 1 2" in t and "KK1 LL1 LL2 0.99" in t
 
 

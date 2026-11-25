@@ -26,7 +26,7 @@ P374 = ["{MODFILE=74XX374.MDF}", "{PACKAGE=DIL20}", "{INIT=0}", "{ITFMOD=TTLHC}"
 KINDS = sorted(dsn.PINS)
 
 
-def _cdb_entry(p) -> tuple:
+def _cdb_entry(p: dict) -> tuple:
     k, ser = p["kind"], p["serial"]
     ref = p["ref"] or ""
     if k == "LS":

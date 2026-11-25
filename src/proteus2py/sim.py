@@ -4,21 +4,29 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
+from typing import Any
 
 from . import circuit, measure, pdf
 from . import workspace as ws
+from .models import CircuitSpec, MonteCarloResult, MonteCarloRun, SimResult, SweepResult, SweepRow
+from .units import to_float
 
-RUNS: dict[str, dict] = {}                      # name -> {"spec","built","result","analysis"}
+RUNS: dict[str, dict[str, Any]] = {}            # name -> {"spec","built","result","analysis"}
+
+
+def _as_dict(spec: dict[str, Any] | CircuitSpec) -> dict[str, Any]:
+    return spec.model_dump(exclude_unset=True) if isinstance(spec, CircuitSpec) else spec
 
 
 def _warnings(console: list[str]) -> list[str]:
     return [x[3:].strip() for x in console if x.startswith(("#W:", "#F:", "#X:"))]
 
 
-def simulate(spec: dict, name: str = "sim", max_rows: int = 40, timeout: int = 180) -> dict:
+def simulate(spec: dict[str, Any] | CircuitSpec, name: str = "sim", max_rows: int = 40, timeout: int = 180) -> SimResult:
+    spec = circuit.validate(spec)
     b, res, info = circuit.run(spec, name, timeout)
     RUNS[name] = {"spec": spec, "built": b, "result": res, "analysis": b.analysis}
-    out: dict = {"name": name, "analysis": b.analysis, "probes": [p.name for p in res.probes], "x_range": [res.x_min, res.x_max],
+    out: dict[str, Any] = {"name": name, "analysis": b.analysis, "probes": [p.name for p in res.probes], "x_range": [res.x_min, res.x_max],
                  "warnings": _warnings(info["console"]), "solver_options": info.get("options_used", {})}
     csvp = ws.exchange() / f"{name}.csv"
     out["csv"] = str(csvp)
@@ -36,7 +44,7 @@ def simulate(spec: dict, name: str = "sim", max_rows: int = 40, timeout: int = 1
         onoise = [y.real for y in p0.y]
         inoise = [y.imag for y in p0.y]
 
-        def total(v):
+        def total(v: list[float]) -> float:
             return math.sqrt(sum((xs[i + 1] - xs[i]) * (v[i] ** 2 + v[i + 1] ** 2) / 2 for i in range(len(xs) - 1)))
         out["noise"] = {"output_V_per_rtHz": {"at_start": onoise[0], "at_end": onoise[-1], "max": max(onoise)}, "total_output_rms_V": total(onoise),
                         "input_referred_V_per_rtHz": {"at_start": inoise[0], "at_end": inoise[-1]}, "total_input_rms_V": total(inoise)}
@@ -48,13 +56,14 @@ def simulate(spec: dict, name: str = "sim", max_rows: int = 40, timeout: int = 1
     else:
         out["table"] = measure.table(res, n=max_rows)
         if len(res.family) > 1:                              # nested DC sweep: one curve per outer value
-            an = spec.get("analysis", {})
-            out["family"] = [{"outer": (an["start2"] + k * an["step2"]) if "start2" in an else k,
+            an = spec.analysis
+            s2, d2 = getattr(an, "start2", None), getattr(an, "step2", None)
+            out["family"] = [{"outer": (to_float(s2) + k * to_float(d2)) if s2 is not None and d2 is not None else float(k),
                               "table": measure.table(c, n=max(8, max_rows // 4))} for k, c in enumerate(res.family)]
-    return out
+    return SimResult.model_validate(out)
 
 
-def _ac_summary(p: pdf.Probe) -> dict:
+def _ac_summary(p: pdf.Probe) -> dict[str, Any]:
     try:
         bw = measure.bandwidth(p)
     except ValueError:
@@ -63,13 +72,13 @@ def _ac_summary(p: pdf.Probe) -> dict:
     return {"db_at_start": rows[0]["db"], "peak_db": bw.get("peak_db"), "peak_f": bw.get("peak_f"), "f_high_3db": bw.get("f_high_3db")}
 
 
-def get(name: str) -> dict:
+def get(name: str) -> dict[str, Any]:
     if name not in RUNS:
         raise KeyError(f"no run named {name!r}; run simulate first (have {sorted(RUNS)})")
     return RUNS[name]
 
 
-def measure_run(name: str, what: str, probe: str, **kw) -> dict:
+def measure_run(name: str, what: str, probe: str, **kw: Any) -> dict[str, Any]:
     r = get(name)["result"]
     try:
         p = r.probe(probe)
@@ -163,7 +172,7 @@ def model_text(name: str) -> str:
 
 
 # ---- parameter sweeps / Monte Carlo -------------------------------------------------------------------------------
-def _metric(run_name: str, metric: dict) -> float:
+def _metric(run_name: str, metric: dict[str, Any]) -> float:
     """metric = {"what":"stats","probe":"v(out)","field":"rms"} | {"what":"op","probe":"v(out)"} |
     {"what":"bandwidth","probe":"v(out)","field":"f_high_3db"} | {"what":"at","probe":"v(out)","x":1000,"field":"mag"} | {"what":"harmonics",...,"field":"thd_pct"}"""
     w = metric["what"].lower()
@@ -186,7 +195,7 @@ def _metric(run_name: str, metric: dict) -> float:
     return float(v)
 
 
-def _apply(spec: dict, target: str, value) -> dict:
+def _apply(spec: dict[str, Any], target: str, value: Any) -> dict[str, Any]:
     """target: "R1" (part value) | "R1.value" | "temp" | "V1.wave.freq" | "V1.value" -> modified deep copy."""
     import copy
     s = copy.deepcopy(spec)
@@ -205,58 +214,58 @@ def _apply(spec: dict, target: str, value) -> dict:
     return s
 
 
-def sweep(spec: dict, target: str, values: list, metric: dict, name: str = "sweep") -> dict:
+def sweep(spec: dict[str, Any] | CircuitSpec, target: str, values: list[Any], metric: dict[str, Any], name: str = "sweep") -> SweepResult:
     """Re-simulate for each value of `target` (a part value, 'temp', 'V1.wave.freq'...) and collect one metric per run."""
-    rows = []
+    base = _as_dict(spec)
+    rows: list[SweepRow] = []
     for i, v in enumerate(values):
         try:
-            simulate(_apply(spec, target, v), f"{name}_{i}", max_rows=2)
-            rows.append({"value": v, "result": _metric(f"{name}_{i}", metric)})
+            simulate(_apply(base, target, v), f"{name}_{i}", max_rows=2)
+            rows.append(SweepRow(value=v, result=_metric(f"{name}_{i}", metric)))
         except Exception as e:                           # noqa: BLE001
-            rows.append({"value": v, "error": str(e)[:200]})
-    return {"target": target, "metric": metric, "rows": rows}
+            rows.append(SweepRow(value=v, error=str(e)[:200]))
+    return SweepResult(target=target, metric=metric, rows=rows)
 
 
-def _tol(x) -> float:
+def _tol(x: str | float) -> float:
     if isinstance(x, str) and x.strip().endswith("%"):
         return float(x.strip()[:-1]) / 100
     return float(x)
 
 
-def monte_carlo(spec: dict, tolerances: dict[str, str | float], metric: dict, runs: int = 20, seed: int = 1, distribution: str = "gauss",
-                name: str = "mc") -> dict:
+def monte_carlo(spec: dict[str, Any] | CircuitSpec, tolerances: dict[str, str | float], metric: dict[str, Any], runs: int = 20, seed: int = 1,
+                distribution: str = "gauss", name: str = "mc") -> MonteCarloResult:
     """Randomise part values (R/C/L; tolerance 5% or 0.05; gauss = sigma tol/3, uniform = +-tol) and collect one metric per run."""
     import random
-
-    from .circuit import _f
+    base = _as_dict(spec)
     rng = random.Random(seed)
-    vals, runs_out = [], []
+    vals: list[float] = []
+    runs_out: list[MonteCarloRun] = []
     for i in range(runs):
-        s = spec
-        draw = {}
+        s = base
+        draw: dict[str, float] = {}
         for ref, tol in tolerances.items():
-            part = next(p for p in spec["parts"] if p["ref"] == ref)
-            nominal = _f(part["value"])
+            part = next(p for p in base["parts"] if p["ref"] == ref)
             t = _tol(tol)
             f = rng.gauss(0, t / 3) if distribution == "gauss" else rng.uniform(-t, t)
-            draw[ref] = nominal * (1 + f)
+            draw[ref] = to_float(part["value"]) * (1 + f)
             s = _apply(s, ref, draw[ref])
         try:
             simulate(s, f"{name}_{i}", max_rows=2)
             m = _metric(f"{name}_{i}", metric)
             vals.append(m)
-            runs_out.append({"values": draw, "metric": m})
+            runs_out.append(MonteCarloRun(values=draw, metric=m))
         except Exception as e:                           # noqa: BLE001
-            runs_out.append({"values": draw, "error": str(e)[:200]})
+            runs_out.append(MonteCarloRun(values=draw, error=str(e)[:200]))
     if not vals:
-        return {"runs": runs_out, "error": "all runs failed"}
+        return MonteCarloResult(runs=runs_out, error="all runs failed")
     mean = sum(vals) / len(vals)
     sd = (sum((v - mean) ** 2 for v in vals) / max(len(vals) - 1, 1)) ** 0.5
-    return {"n": len(vals), "mean": mean, "std": sd, "min": min(vals), "max": max(vals), "runs": runs_out}
+    return MonteCarloResult(n=len(vals), mean=mean, std=sd, min=min(vals), max=max(vals), runs=runs_out)
 
 
 # ---- run an SDF that ISIS wrote (project netlist) headless ---------------------------------------------------------
-def run_sdf(sdf_path: Path, name: str, timeout: int = 180, max_rows: int = 40) -> dict:
+def run_sdf(sdf_path: Path, name: str, timeout: int = 180, max_rows: int = 40) -> SimResult:
     """Simulate an ISIS-written netlist headless; decode results; register as run `name` (measure/derive/plot_run work on it)."""
     from . import prospice
     text = sdf_path.read_text(errors="replace")
@@ -270,13 +279,12 @@ def run_sdf(sdf_path: Path, name: str, timeout: int = 180, max_rows: int = 40) -
         raise RuntimeError(f"no result for partition {part!r}: {r['console']}")
     res = pdf.load(f)
     st = props.get("SIMTYPE", "")
-    kind = {"TRANSIENT": "transient", "FREQUENCY": "ac", "DCSWEEP": "dc"}.get(st, "dc" if props.get("ANALYSIS") == "DC" else "transient")
+    kind = {"TRANSIENT": "transient", "FREQUENCY": "ac", "DCSWEEP": "dc", "NOISE": "noise"}.get(st, "dc" if props.get("ANALYSIS") == "DC" else "transient")
     RUNS[name] = {"spec": None, "built": None, "result": res, "analysis": kind, "sdf": str(sdf_path)}
-    out = {"name": name, "analysis": kind, "partition": part, "probes": [p.name for p in res.probes], "x_range": [res.x_min, res.x_max],
-           "warnings": _warnings(r["console"]), "table": measure.table(res, n=max_rows, log=(kind == "ac"))}
+    csvp = ws.exchange() / f"{name}.csv"
+    n = measure.write_csv(res, csvp)
+    out: dict[str, Any] = {"name": name, "analysis": kind, "partition": part, "probes": [p.name for p in res.probes], "x_range": [res.x_min, res.x_max],
+                           "warnings": _warnings(r["console"]), "table": measure.table(res, n=max_rows, log=(kind == "ac")), "csv": str(csvp), "csv_rows": n}
     if kind == "transient":
         out["stats"] = {p.name: measure.stats(p) for p in res.probes if p.y and not p.complex}
-    csvp = ws.exchange() / f"{name}.csv"
-    measure.write_csv(res, csvp)
-    out["csv"] = str(csvp)
-    return out
+    return SimResult.model_validate(out)
