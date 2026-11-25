@@ -28,6 +28,21 @@ Evaluate an expression of a finished run's probes on a grid, e.g. "db(v(out)/v(i
 | `points` | integer |
 | `interp` | string |
 
+## `evidence`
+
+Proteus-authored evidence bundle for a project that contains simulation graphs. In ONE Proteus session: run each graph (all by default, or the
+    1-based indices in `graphs`), save Proteus's own full-size graph picture and the data Proteus exports (Graph > Export Graph Data), screenshot the
+    schematic, and write a manifest with SHA-256 checksums. Use this when reviewers only trust Proteus's own results: no number in it is computed by
+    Python. Open dialogs/errors during the run are reported in `note` fields of the screenshots (see gui_run for manual control).
+
+| parameter | type |
+|---|---|
+| `project` | string |
+| `graphs` | array/null |
+| `wait` | number |
+| `load_wait` | number |
+| `max_seconds` | number |
+
 ## `export_project`
 
 Copy a sandbox project to a NEW host path. Refuses to overwrite.
@@ -45,7 +60,7 @@ Open a Proteus project in the sandbox, perform `actions`, return the screenshots
       {"do":"wait","s":5} | {"do":"click","x":1200,"y":560} | {"do":"click_design","x":-1900,"y":-1000} (thou; toggles a LOGICSTATE/DIP switch)
       {"do":"key","keys":"F12"} | {"do":"type","text":"..."} | {"do":"simulate","mode":"graph|animated","graph":2,"wait":15}
       {"do":"view_graph","index":0,"name":"g"} (double-click the graph title bar: full-size Proteus graph; picture returned)
-      {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
+      {"do":"export_graph_data","name":"x"} (Proteus writes the selected graph's data to exchange/x.dat) | {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
     Screen is 1920x1080. A screenshot is always appended at the end.
 
 | parameter | type |

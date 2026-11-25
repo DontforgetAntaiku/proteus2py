@@ -247,3 +247,30 @@ class GenResult(BaseModel):
     parts: int
     wires: int
     conflicts: list[str]                    # geometric clashes between different nets (must be empty)
+
+
+class EvidenceFile(BaseModel):
+    kind: str                              # screenshot | graph_view | graph_data | project
+    path: str
+    sha256: str
+    bytes: int
+    graph: int | None = None
+
+
+class GraphData(BaseModel):
+    graph: int
+    file: str
+    columns: list[str]
+    rows: list[list[float]]                # first rows of Proteus's own export (full file on disk)
+    n_rows: int
+
+
+class Evidence(BaseModel):
+    """Everything in this bundle was produced by Proteus itself: its simulation, its graph drawing, its data export."""
+    project: str
+    proteus: str                           # window title of the Proteus instance that ran the simulation
+    created: str
+    graphs: list[GraphData]
+    files: list[EvidenceFile]
+    manifest: str                          # JSON manifest with checksums (same content as `files`)
+    note: str = "Numbers: Proteus 'Export Graph Data' (.dat). Pictures: Proteus graph views and schematic screenshots. Nothing was recomputed in Python."

@@ -123,6 +123,41 @@ class BaseSession(ABC):
         self.click(430, 269 + 21 * (n - 1))
         self.sleep(1)
 
+    def open_graph_view(self, index: int, file_name: str) -> Path:
+        """Double-click graph #index (top to bottom on the schematic) to open Proteus's own full-size graph tab; returns the trimmed screenshot."""
+        from . import gui
+        probe = self.shot("_find_graph")
+        bars = gui.find_graph_bars(probe)
+        if index >= len(bars):
+            raise SessionError(f"graph #{index} not found on the schematic ({len(bars)} found): simulate it first")
+        self.double_click(bars[index][0], bars[index][1])
+        self.sleep(4)
+        p = self.shot(file_name)
+        gui.trim(p)
+        return p
+
+    def export_graph_data(self, name: str, timeout: float = 20.0) -> Path:
+        """Graph > Export Graph Data of the currently selected graph: Proteus itself writes `<name>.dat` (CSV: x column then one column per trace)
+        into the exchange folder. Call after the graph was simulated."""
+        ws.name_ok(name)
+        out = ws.exchange() / f"{name}.dat"
+        out.unlink(missing_ok=True)
+        self.click(353, 65)                       # Graph menu
+        self.sleep(1.5)
+        self.click(430, 171)                      # Export Graph Data...
+        self.sleep(2.5)
+        self.type(name)                           # the save dialog opens with the file-name field focused, in the exchange folder
+        self.key("Return")
+        end = time.monotonic() + timeout
+        while time.monotonic() < end and not (out.exists() and out.stat().st_size > 0):
+            self.sleep(0.5)
+        if not out.exists():
+            raise SessionError(f"Proteus did not write {out.name}: run the graph simulation first and check the dialog with a screenshot")
+        self.sleep(1.5)                           # let the dialog close, then force a repaint (Wine leaves a black patch where the dialog was)
+        self.click(1500, 300)
+        self.sleep(1)
+        return out
+
     def _start_capture(self, tag: str | None) -> Path:
         d = ws.exchange() / f"cap_{ws.name_ok(tag or self.name)}"
         shutil.rmtree(d, ignore_errors=True)

@@ -16,7 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import gen, gui, project, prospice, session, sim, spice
 from . import workspace as ws
-from .models import GenResult, MonteCarloResult, ProjectRunResult, SimResult, SweepResult
+from .models import Evidence, EvidenceFile, GenResult, GraphData, MonteCarloResult, ProjectRunResult, SimResult, SweepResult
 
 mcp = MCPServer("proteus")
 
@@ -109,7 +109,7 @@ def gui_run(project: str, actions: list[dict[str, Any]], load_wait: float = 40, 
       {"do":"wait","s":5} | {"do":"click","x":1200,"y":560} | {"do":"click_design","x":-1900,"y":-1000} (thou; toggles a LOGICSTATE/DIP switch)
       {"do":"key","keys":"F12"} | {"do":"type","text":"..."} | {"do":"simulate","mode":"graph|animated","graph":2,"wait":15}
       {"do":"view_graph","index":0,"name":"g"} (double-click the graph title bar: full-size Proteus graph; picture returned)
-      {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
+      {"do":"export_graph_data","name":"x"} (Proteus writes the selected graph's data to exchange/x.dat) | {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
     Screen is 1920x1080. A screenshot is always appended at the end."""
     with _LOCK:
         log: list = []
@@ -146,16 +146,10 @@ def gui_run(project: str, actions: list[dict[str, Any]], load_wait: float = 40, 
                     s.key("F12" if a.get("mode", "graph") == "animated" else "space")
                     s.sleep(float(a.get("wait", 15)))
                 elif do == "view_graph":
-                    probe = s.shot("_find_graph")
-                    s.sleep(0.5)
-                    bars = gui.find_graph_bars(probe)
-                    i = int(a.get("index", 0))
-                    if i >= len(bars):
-                        raise RuntimeError(f"graph #{i} not found ({len(bars)} on the schematic); simulate first")
-                    s.double_click(bars[i][0], bars[i][1])
-                    s.sleep(4)
                     n += 1
-                    imgs += _image(s.shot(a.get("name", f"{project}_graph{n}")))
+                    imgs += _image(s.open_graph_view(int(a.get("index", 0)), a.get("name", f"{project}_graph{n}")), trim=False)
+                elif do == "export_graph_data":
+                    log.append({"exported": str(s.export_graph_data(a.get("name", f"{project}_graph")))})
                 elif do == "close_graph":
                     s.click(*gui.TAB_SCHEMATIC)
                     s.sleep(1)
@@ -354,3 +348,68 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _file_entry(kind: str, p: Path, graph: int | None = None) -> EvidenceFile:
+    data = p.read_bytes()
+    return EvidenceFile(kind=kind, path=str(p), sha256=hashlib.sha256(data).hexdigest(), bytes=len(data), graph=graph)
+
+
+def _read_dat(p: Path, max_rows: int = 40) -> tuple[list[str], list[list[float]], int]:
+    import csv
+    with open(p, newline="") as f:
+        rows = list(csv.reader(f))
+    head, body = rows[0], rows[1:]
+    num: list[list[float]] = []
+    for r in body:
+        try:
+            num.append([float(x) for x in r])
+        except ValueError:
+            continue
+    step = max(1, len(num) // max_rows)
+    return head, num[::step], len(num)
+
+
+@tool()
+def evidence(project: str, graphs: list[int] | None = None, wait: float = 20, load_wait: float = 40, max_seconds: float = 600) -> Evidence:
+    """Proteus-authored evidence bundle for a project that contains simulation graphs. In ONE Proteus session: run each graph (all by default, or the
+    1-based indices in `graphs`), save Proteus's own full-size graph picture and the data Proteus exports (Graph > Export Graph Data), screenshot the
+    schematic, and write a manifest with SHA-256 checksums. Use this when reviewers only trust Proteus's own results: no number in it is computed by
+    Python. Open dialogs/errors during the run are reported in `note` fields of the screenshots (see gui_run for manual control)."""
+    import datetime
+    import json
+
+    from .dsn import read_pdsprj
+    with _LOCK:
+        res = read_pdsprj(ws.project(project))
+        n_graphs = max(1, sum(1 for o in res.objects if o.get("kind") == "GRAPH")) if res.ok else 1
+        todo = graphs or list(range(1, n_graphs + 1))
+        files: list[EvidenceFile] = [_file_entry("project", ws.project(project))]
+        gdata: list[GraphData] = []
+        title = ""
+        with session.once(project, load_wait, max_seconds) as s:
+            wins = s.windows()
+            title = next((w for w in wins if "Proteus" in w), "")
+            for g in todo:
+                if n_graphs > 1:
+                    s.click(1200, 560)
+                    s.select_graph(g)
+                else:
+                    s.click(1200, 560)
+                s.sleep(1)
+                s.key("space")
+                s.sleep(wait)
+                shot = s.shot(f"{project}_ev_g{g}_schematic")
+                files.append(_file_entry("screenshot", shot, g))
+                dat = s.export_graph_data(f"{project}_ev_g{g}")
+                files.append(_file_entry("graph_data", dat, g))
+                head, rows, n = _read_dat(dat)
+                gdata.append(GraphData(graph=g, file=str(dat), columns=head, rows=rows, n_rows=n))
+                view = s.open_graph_view(g - 1, f"{project}_ev_g{g}_graph")
+                files.append(_file_entry("graph_view", view, g))
+                s.click(*gui.TAB_SCHEMATIC)
+                s.sleep(1)
+        created = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        manifest = ws.exchange() / f"{project}_evidence.json"
+        manifest.write_text(json.dumps({"project": project, "proteus": title, "created": created, "files": [f.model_dump() for f in files]}, indent=1))
+        return Evidence(project=project, proteus=title, created=created, graphs=gdata, files=files, manifest=str(manifest))
