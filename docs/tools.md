@@ -137,6 +137,18 @@ Parts (ref, device, pins, properties) read from ROOT.CDB of a project.
 |---|---|
 | `name` | string |
 
+## `project_netlist`
+
+NO GUI: read a Proteus project (`.pdsprj` in the sandbox) directly and return the circuit spec extracted from it: components (R, C, L, diodes,
+    transistors, sources, gates, pots, subcircuits ...), nets, ISIS generators as voltage sources, voltage probes as default probes, current probes as
+    0 V sources. `unsupported` lists components that cannot be simulated headless (VSM microcontroller models, behavioural parts ...). The analysis is not
+    read from the project's graphs: pass one (see simulate) or get an operating point.
+
+| parameter | type |
+|---|---|
+| `name` | string |
+| `analysis` | object/null |
+
 ## `prospice_run`
 
 Run PROSPICE.EXE headless on an SDF in the sandbox. Experimental: results are binary .PDF (not decoded yet).
@@ -208,6 +220,19 @@ Bridge GUI -> numbers: open a Proteus project, trigger its simulation (space = c
 | `graph` | integer/null |
 | `max_seconds` | number |
 | `use_cache` | boolean |
+
+## `simulate_project_nogui`
+
+NO GUI, about 2 s: simulate a Proteus project by extracting its netlist from the file (see project_netlist) and running ProSPICE. Prefer this over
+    simulate_project (which starts Proteus) whenever the design contains only supported parts. Results work with measure / derive / plot_run / sweep.
+
+| parameter | type |
+|---|---|
+| `name` | string |
+| `analysis` | object |
+| `probes` | array/null |
+| `skip_unsupported` | boolean |
+| `run_name` | string |
 
 ## `simulate_spice`
 

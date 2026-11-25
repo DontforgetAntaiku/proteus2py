@@ -14,7 +14,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import gen, gui, prospice, session, sim, spice
+from . import gen, gui, project, prospice, session, sim, spice
 from . import workspace as ws
 from .models import GenResult, MonteCarloResult, ProjectRunResult, SimResult, SweepResult
 
@@ -197,6 +197,23 @@ def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait:
             except Exception as e:                      # noqa: BLE001
                 runs.append({"name": f"{name}_p{i}", "error": str(e)[:300], "sdf": str(f)})
         return ProjectRunResult(captured=[str(f) for f in files], runs=runs, screenshot=str(shot) if shot.exists() else "", from_cache=cached)
+
+
+@tool()
+def project_netlist(name: str, analysis: dict[str, Any] | None = None) -> project.ProjectSpec:
+    """NO GUI: read a Proteus project (`.pdsprj` in the sandbox) directly and return the circuit spec extracted from it: components (R, C, L, diodes,
+    transistors, sources, gates, pots, subcircuits ...), nets, ISIS generators as voltage sources, voltage probes as default probes, current probes as
+    0 V sources. `unsupported` lists components that cannot be simulated headless (VSM microcontroller models, behavioural parts ...). The analysis is not
+    read from the project's graphs: pass one (see simulate) or get an operating point."""
+    return project.project_to_spec(ws.project(name), analysis)
+
+
+@tool()
+def simulate_project_nogui(name: str, analysis: dict[str, Any], probes: list[str] | None = None, skip_unsupported: bool = False,
+                           run_name: str = "project") -> SimResult:
+    """NO GUI, about 2 s: simulate a Proteus project by extracting its netlist from the file (see project_netlist) and running ProSPICE. Prefer this over
+    simulate_project (which starts Proteus) whenever the design contains only supported parts. Results work with measure / derive / plot_run / sweep."""
+    return project.simulate_project_file(ws.project(name), analysis, run_name, probes, skip_unsupported)[0]
 
 
 @tool()

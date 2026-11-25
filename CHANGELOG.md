@@ -6,6 +6,7 @@
   `interp="hold"`, numpy-accelerated harmonics, netlist cache for `simulate_project`.
 - GUI: hard session deadline + watchdog, load detection by screen stability, dialog detection; Windows support (headless native, experimental GUI driver).
 - `.pdsprj` generator refactored (byte-identical output), automatic channel router for wires.
+- Generic `.pdsprj` reader (Ghidra-decoded object types; all 624 sample projects parse), nets and device mapping, `project_netlist` / `simulate_project_nogui`: simulate a Proteus project without starting Proteus.
 - Docs site (mkdocs), golden SDF tests that run in CI without Proteus.
 
 ## 0.1.0

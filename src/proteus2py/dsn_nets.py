@@ -37,12 +37,15 @@ class Nets:
 
     nets: dict[int, list[Pin]] = field(default_factory=dict)
     names: dict[int, list[str]] = field(default_factory=dict)
+    probe_nets: dict[Pin, int] = field(default_factory=dict)     # (probe object, slot) -> net id (generators and voltage probes sit on a net)
 
     def name(self, net: int) -> str:
         n = self.names.get(net)
         return n[0] if n else "#%05d" % net
 
     def net_of(self, pin: Pin) -> int | None:
+        if pin in self.probe_nets:
+            return self.probe_nets[pin]
         for k, pins in self.nets.items():
             if pin in pins:
                 return k
@@ -144,10 +147,18 @@ def build_nets(objects: Sequence[Obj]) -> Nets:
             if t not in lst:
                 lst.append(t)
     res = Nets()
+    root_net: dict[Any, int] = {}
     for k, (root, pins) in enumerate(sorted(groups.items(), key=lambda kv: min(kv[1])), start=1):
+        root_net[root] = k
         res.nets[k] = sorted(pins)
         nm = names_by_root.get(root, [])
         res.names[k] = sorted(nm, key=lambda s: (s != GROUND,)) if nm else []
+    for oi, o in enumerate(objects):
+        if o.get("kind") == "PROBE":
+            for si in range(len(o.get("slots") or ())):
+                n = node((oi, si))
+                if n in uf.p and uf.find(n) in root_net:
+                    res.probe_nets[(oi, si)] = root_net[uf.find(n)]
     return res
 
 
