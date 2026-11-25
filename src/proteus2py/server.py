@@ -109,7 +109,8 @@ def gui_run(project: str, actions: list[dict[str, Any]], load_wait: float = 40, 
       {"do":"wait","s":5} | {"do":"click","x":1200,"y":560} | {"do":"click_design","x":-1900,"y":-1000} (thou; toggles a LOGICSTATE/DIP switch)
       {"do":"key","keys":"F12"} | {"do":"type","text":"..."} | {"do":"simulate","mode":"graph|animated","graph":2,"wait":15}
       {"do":"view_graph","index":0,"name":"g"} (double-click the graph title bar: full-size Proteus graph; picture returned)
-      {"do":"export_graph_data","name":"x"} (Proteus writes the selected graph's data to exchange/x.dat) | {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
+      {"do":"export_graph_data","name":"x"} (Proteus writes the selected graph's data to exchange/x.dat) |
+      {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
     Screen is 1920x1080. A screenshot is always appended at the end."""
     with _LOCK:
         log: list = []
