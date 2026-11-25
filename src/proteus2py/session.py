@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import queue
 import subprocess
 import threading
@@ -45,9 +46,16 @@ class SessionError(RuntimeError):
     pass
 
 
+class SessionTimeout(SessionError):
+    """The call exceeded its hard time limit; the whole sandbox was killed."""
+
+
 class Session:
-    def __init__(self, name: str, start_timeout: int = 240, load_wait: float = 25) -> None:
+    def __init__(self, name: str, start_timeout: int = 240, load_wait: float = 25, max_seconds: float = 300) -> None:
+        """load_wait = MAXIMUM seconds to wait for the project to finish loading (ends early once the screen is stable);
+        max_seconds = hard limit for the whole session: a watchdog kills the sandbox (Xvfb, Wine, Proteus) when it is reached."""
         self.name = ws.name_ok(name)
+        self.deadline = time.monotonic() + max_seconds
         if not ws.project(name).exists():
             raise FileNotFoundError(f"{ws.project(name)} not found")
         script = (SERVER.replace("__SCREEN__", SCREEN).replace("__PDS__", PDS.replace("\\", "\\\\"))
@@ -56,29 +64,52 @@ class Session:
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self.q: queue.Queue[str] = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
+        self._watchdog = threading.Timer(max_seconds, self._kill)
+        self._watchdog.daemon = True
+        self._watchdog.start()
         self.p.stdin.write(script + "\n")
         self.p.stdin.flush()
-        if not self._ok(start_timeout + 30):
+        if not self._ok(min(start_timeout + 30, max_seconds)):
             self.close()
             raise SessionError("Proteus window did not appear")
-        time.sleep(load_wait)       # project load continues after the window exists
+        self.wait_stable(load_wait)       # project load continues after the window exists
 
     def _pump(self) -> None:
         for line in self.p.stdout:
             self.q.put(line.strip())
 
+    def _kill(self) -> None:
+        self.timed_out = True
+        if self.p.poll() is None:
+            self.p.kill()
+
+    timed_out = False
+
+    def _check(self) -> None:
+        if self.timed_out or time.monotonic() > self.deadline:
+            self._kill()
+            raise SessionTimeout("session time limit reached; sandbox killed (raise max_seconds for long tasks)")
+
+    def sleep(self, seconds: float) -> None:
+        """time.sleep that never outlives the session deadline."""
+        self._check()
+        time.sleep(max(0.0, min(seconds, self.deadline - time.monotonic())))
+        self._check()
+
     def _ok(self, timeout: float) -> bool:
         try:
-            return self.q.get(timeout=timeout) == "OK"
+            return self.q.get(timeout=max(0.1, min(timeout, self.deadline - time.monotonic()))) == "OK"
         except queue.Empty:
             return False
 
     def cmd(self, line: str, timeout: float = 30) -> None:
+        self._check()
         if self.p.poll() is not None:
             raise SessionError("sandbox process died")
         self.p.stdin.write(line + "\n")
         self.p.stdin.flush()
         if not self._ok(timeout):
+            self._check()
             raise SessionError(f"no answer to {line!r}")
 
     # primitives
@@ -113,14 +144,37 @@ class Session:
         p.unlink(missing_ok=True)
         self.cmd("mv 1919 1079")                  # park pointer (no tooltips)
         self.cmd(f"shot {p.name}")
+        for _ in range(40):                       # the file becomes visible on the host a moment after the command answers
+            if p.exists():
+                time.sleep(0.15)
+                break
+            time.sleep(0.15)
         return p
+
+    def dialogs(self) -> list[str]:
+        """Visible windows other than the Proteus main window and the Wine desktop (error/recovery dialogs)."""
+        return [w for w in self.windows() if "Proteus 8" not in w and "Wine" not in w and "Рабочий стол" not in w]
+
+    def wait_stable(self, max_wait: float, interval: float = 1.5, need: int = 3) -> float:
+        """Wait until the canvas area is unchanged for `need` consecutive samples (the project finished loading); returns seconds waited."""
+        from .gui import region_hash
+        start = time.monotonic()
+        last, same = None, 0
+        while time.monotonic() - start < max_wait:
+            self.sleep(interval)
+            h = region_hash(self.shot("_stable"))
+            same = same + 1 if h == last else 0
+            last = h
+            if same >= need - 1:
+                break
+        return time.monotonic() - start
 
     def select_graph(self, n: int) -> None:
         """Graph menu -> entry n of the graph list (1-based): the graph that Space simulates."""
         self.click(353, 65)
-        time.sleep(1.5)
+        self.sleep(1.5)
         self.click(430, 269 + 21 * (n - 1))
-        time.sleep(1)
+        self.sleep(1)
 
     def capture_sdf(self, key: str = "space", wait: float = 30.0, tag: str | None = None, graph: int | None = None) -> list[Path]:
         """Press `key` (space = graph simulation, F12 = animated) and collect the LISA*.SDF netlists ISIS hands to ProSPICE.
@@ -133,18 +187,19 @@ class Session:
         self.sh("rm -f /tmp/stop_cap; touch /tmp/stamp")
         self.bg("while [ ! -e /tmp/stop_cap ]; do find /home/sbx/.wine/drive_c/users /home/sbx/.wine/drive_c/windows/temp /home/sbx/exchange "
                 f"-maxdepth 6 -type f -iname 'LISA*.SDF' -newer /tmp/stamp -not -path '*/cap_*' -exec cp -f {{}} /home/sbx/exchange/cap_{tag}/ \\; ; sleep 0.1; done")
-        time.sleep(0.5)
+        self.sleep(0.5)
         self.click(1200, 560)
-        time.sleep(1)
+        self.sleep(1)
         if graph:
             self.select_graph(graph)
         self.key(key)
-        time.sleep(wait)
+        self.sleep(wait)
         self.sh("touch /tmp/stop_cap")
         return sorted(d.glob("LISA*.SDF"))
 
     def close(self) -> None:
         """Quit Proteus, Wine and Xvfb; bwrap's own pid namespace (--die-with-parent) guarantees nothing survives."""
+        self._watchdog.cancel()
         try:
             if self.p.poll() is None:
                 try:
@@ -163,9 +218,9 @@ class Session:
 
 
 @contextlib.contextmanager
-def once(name: str, load_wait: float = 25) -> Iterator[Session]:
+def once(name: str, load_wait: float = 25, max_seconds: float = 300) -> Iterator[Session]:
     """One-shot session: Xvfb + Wine + Proteus run only inside this block and are always torn down afterwards."""
-    s = Session(name, load_wait=load_wait)
+    s = Session(name, load_wait=load_wait, max_seconds=max_seconds)
     try:
         yield s
     finally:

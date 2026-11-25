@@ -56,3 +56,12 @@ def trim(png: Path, pad: int = 6) -> Path:
     box = (max(0, 155 - pad), max(0, 24 - pad), min(w, 1642 + pad), min(h, 980 + pad))
     im.crop(box).save(png)
     return png
+
+
+def region_hash(png: Path) -> str:
+    """Hash of a downscaled canvas area: equal hashes = screen unchanged (used to detect that loading finished)."""
+    import hashlib
+
+    from PIL import Image
+    im = Image.open(png).convert("RGB").crop((155, 24, 1642, 980))
+    return hashlib.md5(im.resize((186, 120)).tobytes()).hexdigest()

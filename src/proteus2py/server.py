@@ -101,24 +101,29 @@ def _image(p: Path, trim: bool = True, crop: list[int] | None = None) -> list[An
 
 
 @tool()
-def gui_run(project: str, actions: list[dict], load_wait: float = 25) -> list:
+def gui_run(project: str, actions: list[dict[str, Any]], load_wait: float = 40, max_seconds: float = 300) -> list[Any]:
     """Open a Proteus project in the sandbox, perform `actions`, return the screenshots, then shut EVERYTHING down (Wine, Xvfb, Proteus)
     before the call returns: nothing keeps running between requests. Startup costs 15-40 s per call (raise load_wait for big designs),
     so put all steps of a task into one call. actions (in order), each a dict:
       {"do":"wait","s":5} | {"do":"click","x":1200,"y":560} | {"do":"click_design","x":-1900,"y":-1000} (thou; toggles a LOGICSTATE/DIP switch)
       {"do":"key","keys":"F12"} | {"do":"type","text":"..."} | {"do":"simulate","mode":"graph|animated","graph":2,"wait":15}
       {"do":"view_graph","index":0,"name":"g"} (double-click the graph title bar: full-size Proteus graph; picture returned)
-      {"do":"close_graph"} | {"do":"windows"} | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
+      {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
     Screen is 1920x1080. A screenshot is always appended at the end."""
     with _LOCK:
         log: list = []
         imgs: list = []
         n = 0
-        with session.once(project, load_wait) as s:
+        with session.once(project, load_wait, max_seconds) as s:
+            dlg = s.dialogs()
+            if dlg:
+                log.append({"dialogs_after_load": dlg})
+                n += 1
+                imgs += _image(s.shot(f"{project}_dialog"))
             for a in actions:
                 do = a.get("do")
                 if do == "wait":
-                    time.sleep(float(a.get("s", 1)))
+                    s.sleep(float(a.get("s", 1)))
                 elif do == "click":
                     s.click(int(a["x"]), int(a["y"]))
                 elif do == "click_design":
@@ -127,29 +132,32 @@ def gui_run(project: str, actions: list[dict], load_wait: float = 25) -> list:
                     s.key(a["keys"])
                 elif do == "type":
                     s.type(a["text"])
+                elif do == "dismiss":
+                    s.key(a.get("keys", "Return"))
+                    s.sleep(1)
                 elif do == "windows":
                     log.append({"windows": s.windows()})
                 elif do == "simulate":
                     s.click(1200, 560)
-                    time.sleep(1)
+                    s.sleep(1)
                     if a.get("graph"):
                         s.select_graph(int(a["graph"]))
                     s.key("F12" if a.get("mode", "graph") == "animated" else "space")
-                    time.sleep(float(a.get("wait", 15)))
+                    s.sleep(float(a.get("wait", 15)))
                 elif do == "view_graph":
                     probe = s.shot("_find_graph")
-                    time.sleep(0.5)
+                    s.sleep(0.5)
                     bars = gui.find_graph_bars(probe)
                     i = int(a.get("index", 0))
                     if i >= len(bars):
                         raise RuntimeError(f"graph #{i} not found ({len(bars)} on the schematic); simulate first")
                     s.sh(f"xdotool mousemove {bars[i][0]} {bars[i][1]} click --repeat 2 --delay 80 1")
-                    time.sleep(4)
+                    s.sleep(4)
                     n += 1
                     imgs += _image(s.shot(a.get("name", f"{project}_graph{n}")))
                 elif do == "close_graph":
                     s.click(*gui.TAB_SCHEMATIC)
-                    time.sleep(1)
+                    s.sleep(1)
                 elif do == "screenshot":
                     n += 1
                     imgs += _image(s.shot(a.get("name", f"{project}_shot{n}")), a.get("trim", True), a.get("crop"))
@@ -161,12 +169,12 @@ def gui_run(project: str, actions: list[dict], load_wait: float = 25) -> list:
 
 
 @tool()
-def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait: float = 25, graph: int | None = None) -> ProjectRunResult:
+def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait: float = 40, graph: int | None = None, max_seconds: float = 300) -> ProjectRunResult:
     """Bridge GUI -> numbers: open a Proteus project, trigger its simulation (space = checked graph or `graph` #n, F12 = animated), capture the
     netlist(s) ISIS hands to ProSPICE, close everything, then re-run them headless. Each captured partition becomes a run `<name>_p0`,
     `<name>_p1`... usable with measure / derive / plot_run / sweep. A screenshot `<name>_graph.png` of Proteus's own graph is saved too."""
     with _LOCK:
-        with session.once(name, load_wait) as s:
+        with session.once(name, load_wait, max_seconds) as s:
             files = s.capture_sdf(key, wait, tag=name, graph=graph)
             s.shot(f"{name}_graph")
         runs: list[SimResult | dict[str, Any]] = []
