@@ -1,11 +1,17 @@
-"""One Proteus GUI session: bwrap + Xvfb + wine PDS.EXE, driven with xdotool through a persistent bash on stdin."""
+"""One Proteus GUI session. Linux: bwrap + Xvfb + Wine + xdotool (everything sandboxed); Windows: the installed Proteus driven with Win32 calls.
+
+Both expose the same API (click, key, type, shot, windows, ...), live only for the duration of one tool call (`once`) and are guarded by a
+hard deadline: a watchdog kills the whole process tree when it expires.
+"""
 from __future__ import annotations
 
 import contextlib
 import queue
+import shutil
 import subprocess
 import threading
 import time
+from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -49,12 +55,96 @@ class SessionTimeout(SessionError):
     """The call exceeded its hard time limit; the whole sandbox was killed."""
 
 
-class Session:
+class BaseSession(ABC):
+    """Platform independent part: deadline/watchdog, load detection, dialogs, graph selection."""
+    name: str
+    timed_out = False
+
+    def _arm(self, max_seconds: float) -> None:
+        self.deadline = time.monotonic() + max_seconds
+        self._watchdog = threading.Timer(max_seconds, self._kill)
+        self._watchdog.daemon = True
+        self._watchdog.start()
+
+    @abstractmethod
+    def _kill(self) -> None: ...
+
+    def _check(self) -> None:
+        if self.timed_out or time.monotonic() > self.deadline:
+            self._kill()
+            raise SessionTimeout("session time limit reached; everything was killed (raise max_seconds for long tasks)")
+
+    def sleep(self, seconds: float) -> None:
+        """time.sleep that never outlives the session deadline."""
+        self._check()
+        time.sleep(max(0.0, min(seconds, self.deadline - time.monotonic())))
+        self._check()
+
+    # -- primitives every platform implements (screen = 1920x1080 virtual screen, Proteus window at (155, 24))
+    @abstractmethod
+    def click(self, x: int, y: int) -> None: ...
+    @abstractmethod
+    def double_click(self, x: int, y: int) -> None: ...
+    @abstractmethod
+    def key(self, keys: str) -> None: ...
+    @abstractmethod
+    def type(self, text: str) -> None: ...
+    @abstractmethod
+    def windows(self) -> list[str]: ...
+    @abstractmethod
+    def shot(self, file_name: str) -> Path: ...
+    @abstractmethod
+    def capture_sdf(self, key: str = "space", wait: float = 30.0, tag: str | None = None, graph: int | None = None) -> list[Path]: ...
+    @abstractmethod
+    def close(self) -> None: ...
+
+    def dialogs(self) -> list[str]:
+        """Visible windows other than the Proteus main window and the desktop (error/recovery dialogs)."""
+        return [w for w in self.windows() if "Proteus 8" not in w and "Wine" not in w and "Рабочий стол" not in w]
+
+    def wait_stable(self, max_wait: float, interval: float = 1.5, need: int = 3) -> float:
+        """Wait until the canvas area is unchanged for `need` consecutive samples (the project finished loading); returns seconds waited."""
+        from .gui import region_hash
+        start = time.monotonic()
+        last, same = None, 0
+        while time.monotonic() - start < max_wait:
+            self.sleep(interval)
+            h = region_hash(self.shot("_stable"))
+            same = same + 1 if h == last else 0
+            last = h
+            if same >= need - 1:
+                break
+        return time.monotonic() - start
+
+    def select_graph(self, n: int) -> None:
+        """Graph menu -> entry n of the graph list (1-based): the graph that Space simulates."""
+        self.click(353, 65)
+        self.sleep(1.5)
+        self.click(430, 269 + 21 * (n - 1))
+        self.sleep(1)
+
+    def _start_capture(self, tag: str | None) -> Path:
+        d = ws.exchange() / f"cap_{ws.name_ok(tag or self.name)}"
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir()
+        return d
+
+    def _trigger(self, key: str, wait: float, graph: int | None) -> None:
+        self.click(1200, 560)
+        self.sleep(1)
+        if graph:
+            self.select_graph(graph)
+        self.key(key)
+        self.sleep(wait)
+
+
+class Session(BaseSession):
+    """Linux: Xvfb + Wine + Proteus inside bubblewrap, driven with xdotool through a persistent bash on stdin."""
+
     def __init__(self, name: str, start_timeout: int = 240, load_wait: float = 25, max_seconds: float = 300) -> None:
         """load_wait = MAXIMUM seconds to wait for the project to finish loading (ends early once the screen is stable);
         max_seconds = hard limit for the whole session: a watchdog kills the sandbox (Xvfb, Wine, Proteus) when it is reached."""
         self.name = ws.name_ok(name)
-        self.deadline = time.monotonic() + max_seconds
         if not ws.project(name).exists():
             raise FileNotFoundError(f"{ws.project(name)} not found")
         script = (SERVER.replace("__SCREEN__", SCREEN).replace("__PDS__", PDS.replace("\\", "\\\\"))
@@ -63,9 +153,7 @@ class Session:
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self.q: queue.Queue[str] = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
-        self._watchdog = threading.Timer(max_seconds, self._kill)
-        self._watchdog.daemon = True
-        self._watchdog.start()
+        self._arm(max_seconds)
         self.p.stdin.write(script + "\n")
         self.p.stdin.flush()
         if not self._ok(min(start_timeout + 30, max_seconds)):
@@ -81,19 +169,6 @@ class Session:
         self.timed_out = True
         if self.p.poll() is None:
             self.p.kill()
-
-    timed_out = False
-
-    def _check(self) -> None:
-        if self.timed_out or time.monotonic() > self.deadline:
-            self._kill()
-            raise SessionTimeout("session time limit reached; sandbox killed (raise max_seconds for long tasks)")
-
-    def sleep(self, seconds: float) -> None:
-        """time.sleep that never outlives the session deadline."""
-        self._check()
-        time.sleep(max(0.0, min(seconds, self.deadline - time.monotonic())))
-        self._check()
 
     def _ok(self, timeout: float) -> bool:
         try:
@@ -111,9 +186,11 @@ class Session:
             self._check()
             raise SessionError(f"no answer to {line!r}")
 
-    # primitives
     def click(self, x: int, y: int) -> None:
         self.cmd(f"c {int(x)} {int(y)}")
+
+    def double_click(self, x: int, y: int) -> None:
+        self.cmd(f"sh xdotool mousemove {int(x)} {int(y)} click --repeat 2 --delay 80 1")
 
     def key(self, keys: str) -> None:
         self.cmd(f"k {keys}")
@@ -150,49 +227,15 @@ class Session:
             time.sleep(0.15)
         return p
 
-    def dialogs(self) -> list[str]:
-        """Visible windows other than the Proteus main window and the Wine desktop (error/recovery dialogs)."""
-        return [w for w in self.windows() if "Proteus 8" not in w and "Wine" not in w and "Рабочий стол" not in w]
-
-    def wait_stable(self, max_wait: float, interval: float = 1.5, need: int = 3) -> float:
-        """Wait until the canvas area is unchanged for `need` consecutive samples (the project finished loading); returns seconds waited."""
-        from .gui import region_hash
-        start = time.monotonic()
-        last, same = None, 0
-        while time.monotonic() - start < max_wait:
-            self.sleep(interval)
-            h = region_hash(self.shot("_stable"))
-            same = same + 1 if h == last else 0
-            last = h
-            if same >= need - 1:
-                break
-        return time.monotonic() - start
-
-    def select_graph(self, n: int) -> None:
-        """Graph menu -> entry n of the graph list (1-based): the graph that Space simulates."""
-        self.click(353, 65)
-        self.sleep(1.5)
-        self.click(430, 269 + 21 * (n - 1))
-        self.sleep(1)
-
     def capture_sdf(self, key: str = "space", wait: float = 30.0, tag: str | None = None, graph: int | None = None) -> list[Path]:
         """Press `key` (space = graph simulation, F12 = animated) and collect the LISA*.SDF netlists ISIS hands to ProSPICE.
         Files land in exchange/cap_<tag>/ ; returns their paths (one per simulated partition)."""
-        tag = ws.name_ok(tag or self.name)
-        d = ws.exchange() / f"cap_{tag}"
-        import shutil
-        shutil.rmtree(d, ignore_errors=True)
-        d.mkdir()
+        d = self._start_capture(tag)
         self.sh("rm -f /tmp/stop_cap; touch /tmp/stamp")
         self.bg("while [ ! -e /tmp/stop_cap ]; do find /home/sbx/.wine/drive_c/users /home/sbx/.wine/drive_c/windows/temp /home/sbx/exchange "
-                f"-maxdepth 6 -type f -iname 'LISA*.SDF' -newer /tmp/stamp -not -path '*/cap_*' -exec cp -f {{}} /home/sbx/exchange/cap_{tag}/ \\; ; sleep 0.1; done")
+                f"-maxdepth 6 -type f -iname 'LISA*.SDF' -newer /tmp/stamp -not -path '*/cap_*' -exec cp -f {{}} /home/sbx/exchange/{d.name}/ \\; ; sleep 0.1; done")
         self.sleep(0.5)
-        self.click(1200, 560)
-        self.sleep(1)
-        if graph:
-            self.select_graph(graph)
-        self.key(key)
-        self.sleep(wait)
+        self._trigger(key, wait, graph)
         self.sh("touch /tmp/stop_cap")
         return sorted(d.glob("LISA*.SDF"))
 
@@ -217,9 +260,13 @@ class Session:
 
 
 @contextlib.contextmanager
-def once(name: str, load_wait: float = 25, max_seconds: float = 300) -> Iterator[Session]:
-    """One-shot session: Xvfb + Wine + Proteus run only inside this block and are always torn down afterwards."""
-    s = Session(name, load_wait=load_wait, max_seconds=max_seconds)
+def once(name: str, load_wait: float = 25, max_seconds: float = 300) -> Iterator[BaseSession]:
+    """One-shot session: everything (Xvfb, Wine, Proteus) lives only inside this block and is always torn down afterwards."""
+    if ws.IS_WINDOWS:
+        from .session_win import WinSession
+        s: BaseSession = WinSession(name, load_wait=load_wait, max_seconds=max_seconds)
+    else:
+        s = Session(name, load_wait=load_wait, max_seconds=max_seconds)
     try:
         yield s
     finally:

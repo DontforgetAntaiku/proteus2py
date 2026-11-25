@@ -214,4 +214,4 @@ def write_libraries(ctx: Ctx) -> None:
         body = "\n".join([text.replace("\x00", ""), *([ctx.spec.spice_text] if ctx.spec.spice_text else []), *others])
         (ws.exchange() / fn).write_text(body + "\n")
         for part in sdf.parts:
-            part.props = [x.replace(f"@LIB@{sub}", "C:\\exchange\\" + fn) for x in part.props]
+            part.props = [x.replace(f"@LIB@{sub}", ws.guest_path(fn)) for x in part.props]

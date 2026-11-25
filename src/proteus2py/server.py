@@ -151,7 +151,7 @@ def gui_run(project: str, actions: list[dict[str, Any]], load_wait: float = 40, 
                     i = int(a.get("index", 0))
                     if i >= len(bars):
                         raise RuntimeError(f"graph #{i} not found ({len(bars)} on the schematic); simulate first")
-                    s.sh(f"xdotool mousemove {bars[i][0]} {bars[i][1]} click --repeat 2 --delay 80 1")
+                    s.double_click(bars[i][0], bars[i][1])
                     s.sleep(4)
                     n += 1
                     imgs += _image(s.shot(a.get("name", f"{project}_graph{n}")))

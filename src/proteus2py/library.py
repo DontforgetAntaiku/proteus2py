@@ -12,11 +12,9 @@ from pathlib import Path
 
 from . import workspace as ws
 
-MODELS_REL = "drive_c/Program Files (x86)/Labcenter Electronics/Proteus 8 Professional/DATA/MODELS"
-
 
 def models_dir() -> Path:
-    return ws.home() / "prefix-pristine" / MODELS_REL
+    return ws.proteus_dir() / "DATA" / "MODELS"
 
 
 @cache

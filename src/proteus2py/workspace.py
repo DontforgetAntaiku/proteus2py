@@ -5,12 +5,33 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 SB_HOME = "/home/sbx"
-BIN = r"C:\Program Files (x86)\Labcenter Electronics\Proteus 8 Professional\BIN"
+IS_WINDOWS = sys.platform == "win32"
+_REL = Path("Labcenter Electronics") / "Proteus 8 Professional"
+BIN = r"C:\Program Files (x86)\Labcenter Electronics\Proteus 8 Professional\BIN"          # as seen from inside Wine
 MODELS = r"C:\Program Files (x86)\Labcenter Electronics\Proteus 8 Professional\DATA\MODELS"
+
+
+def proteus_dir() -> Path:
+    """Proteus 8 install directory on the HOST (Linux: inside the pristine Wine prefix; Windows: the real install, or $PROTEUS_DIR)."""
+    env = os.environ.get("PROTEUS_DIR")
+    if env:
+        return Path(env)
+    if IS_WINDOWS:
+        for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), r"C:\Program Files (x86)", r"C:\Program Files"):
+            if base and (Path(base) / _REL).exists():
+                return Path(base) / _REL
+        return Path(r"C:\Program Files (x86)") / _REL
+    return home() / "prefix-pristine" / "drive_c" / "Program Files (x86)" / _REL
+
+
+def guest_path(name: str) -> str:
+    """Path of an exchange file as the Proteus tools see it (Wine: C:\\exchange\\name, Windows: the real path)."""
+    return str(exchange() / name) if IS_WINDOWS else "C:\\exchange\\" + name
 
 
 def home() -> Path:
