@@ -122,7 +122,7 @@ def _add_probes(ctx: Ctx, want: list[str]) -> list[tuple[str, str]]:
     return probes
 
 
-def build(spec: dict[str, Any] | CircuitSpec) -> Built:
+def build(spec: dict[str, Any] | CircuitSpec, partition: str | None = None) -> Built:
     sp = couple(validate(spec))
     prep = analyses.PREPARE.get(type(sp.analysis))
     if prep:
@@ -132,7 +132,7 @@ def build(spec: dict[str, Any] | CircuitSpec) -> Built:
     refs = {p.ref for p in sp.parts}
     if len(refs) != len(sp.parts):
         raise SpecError("duplicate refs")
-    sdf = Sdf(title=sp.title)
+    sdf = Sdf(title=sp.title, **({"partition": partition} if partition else {}))
     sdf.props["TEMP"] = num(sp.temp)
     for k, v in sp.options.items():
         sdf.props[k.upper()] = num(v)

@@ -231,3 +231,4 @@ class ProjectRunResult(BaseModel):
     captured: list[str]
     runs: list[SimResult | dict[str, Any]]
     screenshot: str
+    from_cache: bool = False

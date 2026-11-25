@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import shutil
 import threading
@@ -169,21 +170,33 @@ def gui_run(project: str, actions: list[dict[str, Any]], load_wait: float = 40, 
 
 
 @tool()
-def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait: float = 40, graph: int | None = None, max_seconds: float = 300) -> ProjectRunResult:
+def simulate_project(name: str, key: str = "space", wait: float = 30, load_wait: float = 40, graph: int | None = None, max_seconds: float = 300,
+                     use_cache: bool = True) -> ProjectRunResult:
     """Bridge GUI -> numbers: open a Proteus project, trigger its simulation (space = checked graph or `graph` #n, F12 = animated), capture the
     netlist(s) ISIS hands to ProSPICE, close everything, then re-run them headless. Each captured partition becomes a run `<name>_p0`,
-    `<name>_p1`... usable with measure / derive / plot_run / sweep. A screenshot `<name>_graph.png` of Proteus's own graph is saved too."""
+    `<name>_p1`... usable with measure / derive / plot_run / sweep. A screenshot `<name>_graph.png` of Proteus's own graph is saved too.
+    The captured netlists are cached by project content: repeating the call for an unchanged project skips the GUI entirely (use_cache=False to force)."""
     with _LOCK:
-        with session.once(name, load_wait, max_seconds) as s:
-            files = s.capture_sdf(key, wait, tag=name, graph=graph)
-            s.shot(f"{name}_graph")
+        key_hash = hashlib.sha256(ws.project(name).read_bytes() + f"|{key}|{graph}".encode()).hexdigest()[:16]
+        cache = ws.exchange() / "sdfcache" / key_hash
+        files = sorted(cache.glob("LISA*.SDF")) if use_cache and cache.exists() else []
+        cached = bool(files)
+        shot = ws.exchange() / f"{name}_graph.png"
+        if not files:
+            with session.once(name, load_wait, max_seconds) as s:
+                files = s.capture_sdf(key, wait, tag=name, graph=graph)
+                s.shot(f"{name}_graph")
+            if files:
+                cache.mkdir(parents=True, exist_ok=True)
+                for f in files:
+                    shutil.copy(f, cache / f.name)
         runs: list[SimResult | dict[str, Any]] = []
         for i, f in enumerate(files):
             try:
                 runs.append(sim.run_sdf(f, f"{name}_p{i}"))
             except Exception as e:                      # noqa: BLE001
                 runs.append({"name": f"{name}_p{i}", "error": str(e)[:300], "sdf": str(f)})
-        return ProjectRunResult(captured=[str(f) for f in files], runs=runs, screenshot=str(ws.exchange() / f"{name}_graph.png"))
+        return ProjectRunResult(captured=[str(f) for f in files], runs=runs, screenshot=str(shot) if shot.exists() else "", from_cache=cached)
 
 
 @tool()
