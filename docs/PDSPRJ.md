@@ -22,3 +22,10 @@ grammar is not fully decoded) or the PDIF/EDIF importer (GUI only).
 ## Automation facts
 `PDS.EXE file.pdsprj` opens a project; one canvas click, then F12 (animated) or Space (graph). There is no scripting/COM/DDE server; ProSPICE is driven headless instead
 (see NOTES_prospice.md). Opening a large design under Wine can take minutes; the first load after a start is flaky, so verify with a screenshot.
+
+## Reading any project (`proteus2py.dsn`)
+`parse_dsn(ROOT.DSN)` reads the whole object stream of Proteus 8 projects (file versions 800-828); it parses all 624 bundled sample projects. Object types
+(from the `Read` methods in ISIS.DLL): `0`/`8` component, `1` junction, `0x10` terminal, `2` text, `5` box text, `6` packet, `7` box, `0x20` 2D primitive,
+`0x21` blob, `0x22` box label, `0x28`-`0x2e`/`0x80`-`0x83` graphs (analogue, digital, mixed, frequency ...; they embed their simulation result traces),
+`0x30`-`0x32`, `0x38`-`0x41`, `0xb8`-`0xc0` generators/probes (two link slots each). Only components, junctions, terminals and probes carry link keys;
+wire bodies follow the object that completes a key pair. Layout details: the decompiled field order is in `re/` (private) and summarised in the lessons.
