@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "proteus": { "command": "uvx", "args": ["proteus2py-mcp"] }
+  }
+}

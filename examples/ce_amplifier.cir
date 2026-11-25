@@ -1,0 +1,13 @@
+Common-emitter amplifier (generic BC547 from the Proteus device library)
+VCC vcc 0 12
+VIN in 0 SIN(0 10m 1k)
+CIN in b 10u
+R1 vcc b 47k
+R2 b 0 10k
+RC vcc c 2.2k
+RE e 0 470
+CE e 0 100u
+Q1 c b e BC547
+.tran 10u 5m
+.probe v(c) v(b)
+.end

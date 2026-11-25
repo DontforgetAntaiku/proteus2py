@@ -1,0 +1,19 @@
+# sandbox, Wine prefixes and everything produced by running Proteus
+sandbox/
+sandbox[0-9]*/
+*.PDF
+cap_*/
+# private research material (decompiled dumps, captures, lab work): never publish
+re/
+examples/lab*/
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+uv.lock
+.mcp.json
+docs/HANDOFF.md
