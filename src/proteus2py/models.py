@@ -232,3 +232,10 @@ class ProjectRunResult(BaseModel):
     runs: list[SimResult | dict[str, Any]]
     screenshot: str
     from_cache: bool = False
+
+
+class GenResult(BaseModel):
+    """Answer of build_design."""
+    parts: int
+    wires: int
+    conflicts: list[str]                    # geometric clashes between different nets (must be empty)

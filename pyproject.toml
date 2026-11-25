@@ -61,5 +61,6 @@ select = ["E", "F", "W", "I", "B", "UP", "ANN"]
 ignore = ["E701", "E702", "E731", "B905", "UP031", "B023", "B007", "ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/proteus2py/_gen/*" = ["E", "F", "W", "I", "B", "UP", "ANN"]
+"src/proteus2py/_gen/cdbfmt.py" = ["E", "F", "W", "I", "B", "UP", "ANN"]          # ported research parsers, round-trip tested
+"src/proteus2py/_gen/pdsfmt.py" = ["E", "F", "W", "I", "B", "UP", "ANN"]
 "tests/*" = ["E402", "ANN"]

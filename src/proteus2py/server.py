@@ -16,7 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import gen, gui, prospice, session, sim, spice
 from . import workspace as ws
-from .models import MonteCarloResult, ProjectRunResult, SimResult, SweepResult
+from .models import GenResult, MonteCarloResult, ProjectRunResult, SimResult, SweepResult
 
 mcp = MCPServer("proteus")
 
@@ -77,7 +77,7 @@ def project_info(name: str) -> dict:
 
 # ---- generation (template-based; limited device set) ----------------------------------------------
 @tool()
-def build_design(name: str, parts: list[dict], wires: list[dict]) -> dict:
+def build_design(name: str, parts: list[dict[str, Any]], wires: list[dict[str, Any]]) -> GenResult:
     """Generate a project from seed templates. parts: [{"id":"U1","kind":"6116","x":-3400,"y":1000,"state":0}] (thou).
     kinds: LS(pin Q) 6116(A0-A10 CE OE WE D0-D7) 74HC374(D0-D7 Q0-Q7 OE CLK) DIPSW_8(L0-L7 R0-R7) BCD BLUE GRN(P0-P3).
     wires: [{"a":"S1.Q","b":"U1.A0","net":"A0","via":[[x,y],...],"jog_x":-5000}]. Without via a 2-bend route is made.
