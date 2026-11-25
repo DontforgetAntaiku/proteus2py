@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+- Typed core: pydantic circuit spec (strict validation) and typed results; element/analysis/SPICE-element registries; `py.typed`; ruff incl. annotations.
+- New: distortion analysis, `W` switches, `i()` inside `B` sources, digital gates / generic DSIM parts / pattern generators / `d()` probes,
+  `interp="hold"`, numpy-accelerated harmonics, netlist cache for `simulate_project`.
+- GUI: hard session deadline + watchdog, load detection by screen stability, dialog detection; Windows support (headless native, experimental GUI driver).
+- `.pdsprj` generator refactored (byte-identical output), automatic channel router for wires.
+- Docs site (mkdocs), golden SDF tests that run in CI without Proteus.
+
 ## 0.1.0
 First release.
 - Headless simulation through Proteus's own engine (ProSPICE): OP, transient, AC, DC sweep (nested), noise; SPICE decks and JSON circuits;

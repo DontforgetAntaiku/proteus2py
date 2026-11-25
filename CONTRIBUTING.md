@@ -18,3 +18,9 @@ Tests against the real engine are opt-in: `PROTEUS_INTEGRATION=1 PROTEUS2PY_HOME
   Describe findings in prose; build test circuits from code.
 - ProSPICE quirks are verified by experiment, not guessed: add a test (`tests/test_wine.py`) with an analytic expected value.
 - New behaviour comes with a test, user-visible behaviour with a docs update and a line in `CHANGELOG.md`.
+
+## Release checklist
+1. `ruff check src tests` and `pytest` are green in CI.
+2. Run the real-engine tests locally: `PROTEUS_INTEGRATION=1 pytest tests/test_wine.py` (CI cannot run Proteus).
+3. If tools changed: `python tools/gen_tool_docs.py`. Update `CHANGELOG.md`, bump the version in `pyproject.toml` and `__init__.py`.
+4. Tag a GitHub release; `publish.yml` uploads to PyPI (trusted publishing).

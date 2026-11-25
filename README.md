@@ -16,6 +16,8 @@
 > **Requires your own licensed Proteus 8 Professional** (installed in a Wine prefix). proteus2py is an independent project, not affiliated with
 > or endorsed by Labcenter Electronics, and ships no Proteus code, libraries or models: it drives the copy you already have.
 
+<p align="center"><img src="docs/assets/tour.gif" width="80%" alt="generated design in Proteus, AC response, transient"></p>
+
 ## Why
 Proteus is a capable simulator many universities teach with, but it has no scripting interface. proteus2py reverse-engineered the pieces that matter:
 
@@ -48,7 +50,7 @@ print(sim.measure_run("ce", "harmonics", "v(c)", f0=1000)["thd_pct"])
 { "mcpServers": { "proteus": { "command": "uvx", "args": ["proteus2py-mcp"] } } }
 ```
 Tools: `simulate`, `simulate_spice`, `measure`, `derive`, `sweep`, `monte_carlo`, `plot_run`, `search_models`, `model_text`, `simulate_project`, `gui_run`, `build_design`, ...
-See [docs/MCP.md](docs/MCP.md).
+Full reference: [docs](docs/index.md) (mkdocs), [tool list](docs/tools.md), [example session](docs/transcript.md).
 
 ## Verified against theory
 RC step response (0.03 %), RC -3 dB point (1000.09 Hz), resistor thermal noise (1e-4), BJT bias point and output characteristics, OP07 gain-11 amplifier (5.5002 V),

@@ -15,6 +15,10 @@ from . import workspace as ws
 def _doctor() -> int:
     ok = True
     print(f"proteus2py {__version__}   data dir: {ws.home()}")
+    if ws.IS_WINDOWS:
+        exe = ws.proteus_dir() / "BIN" / "PROSPICE.EXE"
+        print(f"  Proteus install: {ws.proteus_dir()}  PROSPICE.EXE {'ok' if exe.exists() else 'MISSING (set PROTEUS_DIR)'}")
+        return 0 if exe.exists() else 1
     for tool in ("bwrap", "wine", "Xvfb", "xdotool", "import"):
         p = shutil.which(tool)
         gui_only = tool in ("Xvfb", "xdotool", "import")

@@ -1,0 +1,16 @@
+site_name: proteus2py
+site_description: Script Proteus 8 from Python and AI assistants
+repo_url: https://github.com/DontforgetAntaiku/proteus2py
+theme: { name: material }
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Analyses and elements: analyses.md
+  - MCP tools: tools.md
+  - An assistant session: transcript.md
+  - Windows: windows.md
+  - Development: development.md
+  - Notes:
+      - ProSPICE: NOTES_prospice.md
+      - .pdsprj format: PDSPRJ.md
+      - MCP overview: MCP.md
