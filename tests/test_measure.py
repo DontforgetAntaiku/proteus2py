@@ -18,11 +18,11 @@ def test_ac_decode_and_bandwidth():
 
 
 def test_stats_and_table():
-    r = pdf.load(D / "tran_741.PDF")
-    st = measure.stats(r.probe("OUT"))
+    r = pdf.load(D / "tran_rc.PDF")
+    st = measure.stats(r.probe("v(out)"))
     assert st["min"] < st["mean"] < st["max"]
-    t = measure.table(r, ["OUT"], 5)
-    assert t["columns"] == ["x", "OUT"] and len(t["rows"]) == 5
+    t = measure.table(r, ["v(out)"], 5)
+    assert t["columns"] == ["x", "v(out)"] and len(t["rows"]) == 5
 
 
 def test_harmonics_of_synthetic_sine():
@@ -38,7 +38,7 @@ def test_harmonics_of_synthetic_sine():
 
 def test_nested_dc_sweep_family():
     r = pdf.load(D / "dc_family.PDF")
-    assert len(r.family) == 11                       # IB = 100 uA ... 1 mA in 90 uA steps
-    ic = [c.probe("IC") for c in r.family]
+    assert len(r.family) == 5                        # IB = 20 .. 100 uA in 20 uA steps
+    ic = [c.probe("i(VCE)") for c in r.family]
     assert ic[0].x[0] == 0.0 and ic[0].x[-1] == pytest.approx(10.0)
-    assert ic[-1].y[-1] > ic[0].y[-1] * 4            # collector current grows with base current
+    assert abs(ic[-1].y[-1]) > abs(ic[0].y[-1]) * 3     # collector current grows with base current

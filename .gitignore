@@ -17,3 +17,4 @@ build/
 uv.lock
 .mcp.json
 docs/HANDOFF.md
+!tests/data/*.PDF
