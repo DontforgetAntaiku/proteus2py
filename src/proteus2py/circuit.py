@@ -85,22 +85,34 @@ def couple(spec: CircuitSpec) -> CircuitSpec:
     return spec.model_copy(update={"parts": parts, "subckts": subckts})
 
 
+def digital_nets(spec: CircuitSpec) -> list[str]:
+    return [p.nodes[0] for p in spec.parts if p.kind == "DGEN" and p.nodes]
+
+
 def _probe_list(spec: CircuitSpec, ctx: Ctx) -> list[str]:
     if isinstance(spec.analysis, analyses.NoiseAnalysis):
         return [f"v({spec.analysis.output})"]
-    return spec.probes or [f"v({n})" for n in ctx.nodes_seen]
+    want = list(spec.probes or [f"v({n})" for n in ctx.nodes_seen if n not in digital_nets(spec)])
+    # ProSPICE only evaluates a digital generator's pattern while its net is probed (an unprobed pattern stops after the first edge)
+    want += [f"d({n})" for n in digital_nets(spec) if f"d({n})" not in want]
+    return want
 
 
 def _add_probes(ctx: Ctx, want: list[str]) -> list[tuple[str, str]]:
     s = ctx.sdf
     probes: list[tuple[str, str]] = []
     for i, w in enumerate(want):
-        m = re.fullmatch(r"\s*([vi])\(\s*([^)]+?)\s*\)\s*", w, re.I)
+        m = re.fullmatch(r"\s*([vid])\(\s*([^)]+?)\s*\)\s*", w, re.I)
         if not m:
-            raise SpecError(f"probe {w!r}: use v(node) or i(ref)")
+            raise SpecError(f"probe {w!r}: use v(node), i(ref) or d(node) for digital nets")
         kind, what = m.group(1).lower(), m.group(2)
         pid = f"P{i:04d}"
-        if kind == "v":
+        if kind == "d":
+            n = ctx.see(what)
+            if n not in s.nets:
+                raise SpecError(f"probe {w}: unknown node {what!r}; nodes: {ctx.nodes_seen}")
+            s.add_part(pid, "DPROBE", w, [f"PARTITION={s.partition}", "PRIMITIVE=PROBE"], [(n, "IP", "*")])
+        elif kind == "v":
             n = ctx.see(what)
             if n not in s.nets and n != "GND":
                 raise SpecError(f"probe {w}: unknown node {what!r}; nodes: {ctx.nodes_seen}")

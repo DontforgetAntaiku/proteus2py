@@ -103,3 +103,20 @@ def test_distortion_analysis_of_a_clipping_stage():
     assert d is not None and d.fundamental == pytest.approx(0.1, rel=0.02)     # the diode barely conducts at 0.1 V: nearly linear
     clipped = sim.simulate({**spec, "parts": [{**spec["parts"][0], "wave": {"type": "sine", "amp": 3, "freq": 1000}}, *spec["parts"][1:]]}, "it_dist2")
     assert clipped.distortion.thd_pct > 5 * d.thd_pct and clipped.distortion.harmonics_rel_pct[0] > 1   # 2nd harmonic from half-wave clipping
+
+
+def test_digital_gates_and_latch():
+    from proteus2py import sim
+    gens = [{"ref": "GA", "kind": "DGEN", "nodes": ["a"], "pattern": "0011", "width": "100n"},
+            {"ref": "GB", "kind": "DGEN", "nodes": ["b"], "pattern": "0101", "width": "100n"}]
+    for gate, expect in (("AND", [0, 0, 0, 1]), ("OR", [0, 1, 1, 1]), ("NOR", [1, 0, 0, 0]), ("XOR", [0, 1, 1, 0]), ("NAND", [1, 1, 1, 0])):
+        r = sim.simulate({"parts": [*gens, {"ref": "U1", "kind": "GATE", "gate": gate, "nodes": ["a", "b", "q"]}],
+                          "analysis": {"type": "transient", "tstop": "400n", "tmax": "10n"}, "probes": ["d(q)"]}, f"it_{gate}")
+        p = sim.get(f"it_{gate}")["result"].probe("d(q)")
+        assert [int(p.at((i * 100 + 60) * 1e-9)) for i in range(4)] == expect, gate
+    assert r.digital is not None and r.digital["d(q)"][0][1] in (0, 1)
+    r = sim.simulate({"parts": [{"ref": "GA", "kind": "DGEN", "nodes": ["a"], "pattern": "0011", "width": "100n"},
+                                {"ref": "U1", "kind": "GATE", "gate": "NOT", "nodes": ["a", "q"]}],
+                      "analysis": {"type": "transient", "tstop": "400n", "tmax": "10n"}, "probes": ["d(q)"]}, "it_not")
+    p = sim.get("it_not")["result"].probe("d(q)")
+    assert [int(p.at((i * 100 + 60) * 1e-9)) for i in range(4)] == [1, 1, 0, 0]

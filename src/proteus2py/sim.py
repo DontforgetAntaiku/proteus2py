@@ -37,6 +37,9 @@ def simulate(spec: dict[str, Any] | CircuitSpec, name: str = "sim", max_rows: in
     elif t == "transient":
         out["stats"] = {p.name: measure.stats(p) for p in res.probes if p.y}
         out["table"] = measure.table(res, n=max_rows)
+        dig = {p.name: [(x, int(y)) for x, y in zip(p.x, p.y)][:200] for p in res.probes if p.kind == pdf.KIND_DIGITAL}
+        if dig:
+            out["digital"] = dig
     elif t == "distortion":
         an = spec.analysis
         h = measure.harmonics(res.probes[0], to_float(an.f0), an.periods, None, an.nharm + 1)

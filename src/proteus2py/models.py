@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Number = float | int | str            # 1e-3, 5, "4.7k" (ISIS notation: m = milli, M = mega)
-KINDS = ("R", "C", "L", "V", "I", "D", "Q", "QP", "J", "JP", "M", "MP", "E", "G", "F", "H", "K", "X", "OPAMP")
+KINDS = ("R", "C", "L", "V", "I", "D", "Q", "QP", "J", "JP", "M", "MP", "E", "G", "F", "H", "K", "X", "OPAMP", "GATE", "DIGITAL", "DGEN")
 
 
 class _Strict(BaseModel):
@@ -37,6 +37,13 @@ class Part(_Strict):
     subckt: str | None = None               # X: subcircuit name
     gain: Number | None = None              # OPAMP
     rout: Number | None = None              # OPAMP
+    gate: str | None = None                 # GATE: AND NAND OR NOR XOR XNOR NOT BUF (inputs first, output last in `nodes`)
+    primitive: str | None = None            # DIGITAL: DSIM primitive name, e.g. NAND_2 (use `pins` to name the pins)
+    pins: list[str] | None = None           # DIGITAL: pin names with direction, e.g. ["D0:IP", "D1:IP", "Q:OP"]
+    pattern: str | None = None              # DGEN: bit pattern such as "0111101"
+    init: str = "LOW"                       # DGEN: level before the pattern starts
+    width: Number | None = None             # DGEN: time per bit
+    delays: dict[str, Number] = Field(default_factory=dict)   # GATE/DIGITAL: propagation delays (TDHLDQ, TDLHDQ, TGQ ...)
 
     @field_validator("kind")
     @classmethod
@@ -196,6 +203,7 @@ class SimResult(BaseModel):
     distortion: Distortion | None = None
     table: Table | None = None
     family: list[Curve] | None = None
+    digital: dict[str, list[tuple[float, int]]] | None = None      # digital probes: [(time, level)] transitions
     partition: str | None = None
 
 

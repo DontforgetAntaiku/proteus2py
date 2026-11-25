@@ -205,6 +205,43 @@ def _opamp(ctx: Ctx, p: Part) -> None:
     ctx.sdf.add_part(f"{p.ref}_RO", "RES", num(to_float(p.rout if p.rout is not None else 1)), ["PRIMITIVE=PASSIVE"], [(mid, "PS", "1"), (nodes[2], "PS", "2")])
 
 
+_GATES = {"AND", "NAND", "OR", "NOR", "XOR", "XNOR"}
+
+
+@element("GATE")
+def _gate(ctx: Ctx, p: Part) -> None:
+    g = (p.gate or p.model or "").upper()
+    if g not in _GATES | {"NOT", "BUF"}:
+        raise SpecError(f"{p.ref}: gate must be one of {sorted(_GATES | {'NOT', 'BUF'})}")
+    if len(p.nodes) < 2:
+        raise SpecError(f"{p.ref}: GATE needs inputs then the output in `nodes`")
+    nodes = [ctx.see(n) for n in p.nodes]
+    n_in = len(nodes) - 1
+    lib = {"NOT": "INVERTER", "BUF": "BUFFER"}.get(g) or f"{g}_{n_in}"
+    pins = [("IP", "D")] if g in ("NOT", "BUF") else [("IP", f"D{i}") for i in range(n_in)]
+    ctx.sdf.add_part(p.ref, lib, g, ["PRIMITIVE=DIGITAL", *[f"{k.upper()}={num(v)}" for k, v in p.delays.items()]],
+                     [(n, t, pn) for n, (t, pn) in zip(nodes, [*pins, ("OP", "Q")])])
+
+
+@element("DIGITAL")
+def _digital(ctx: Ctx, p: Part) -> None:
+    if not p.primitive or not p.pins:
+        raise SpecError(f'{p.ref}: DIGITAL needs "primitive" (DSIM name) and "pins" like ["D:IP", "Q:OP"]')
+    nodes = [ctx.see(n) for n in _need(p, len(p.pins))]
+    spec = [x.split(":") for x in p.pins]
+    ctx.sdf.add_part(p.ref, p.primitive, p.primitive, ["PRIMITIVE=DIGITAL", *[f"{k.upper()}={num(v)}" for k, v in {**p.params, **p.delays}.items()]],
+                     [(n, t, pn) for n, (pn, t) in zip(nodes, spec)])
+
+
+@element("DGEN")
+def _digital_generator(ctx: Ctx, p: Part) -> None:
+    """Digital pattern generator (a ProSPICE 'generator' part driving one net)."""
+    n = ctx.see(_need(p, 1)[0])
+    if not p.pattern or p.width is None:
+        raise SpecError(f'{p.ref}: DGEN needs "pattern" (e.g. "0110") and "width" (time per bit)')
+    ctx.sdf.add_part(p.ref, "DIGITAL!", p.ref, [f"INIT={p.init}", f"PATTERN={p.pattern}", f"WIDTH={num(p.width)}", "PRIMITIVE=PROBE"], [(n, "OP", "*")])
+
+
 def write_libraries(ctx: Ctx) -> None:
     """Subcircuit texts -> .LIB files in the exchange folder (ProSPICE parses SPICE text itself, full Windows path required)."""
     sdf = ctx.sdf

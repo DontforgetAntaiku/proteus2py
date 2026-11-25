@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 MAGIC = b"LISA PARTITION DATA FILE"
-KIND_REAL, KIND_COMPLEX = 8, 16        # probe table type codes seen so far (digital kinds not decoded)
+KIND_DIGITAL, KIND_REAL, KIND_COMPLEX = 4, 8, 16        # probe table type codes: digital (u32 state), analogue, complex (AC/noise)
 
 
 @dataclass
@@ -26,6 +26,7 @@ class Probe:
     kind: int
     x: list[float] = field(default_factory=list)
     y: list = field(default_factory=list)          # float, or complex for AC probes
+    raw: list = field(default_factory=list)        # digital probes: raw DSIM state words (one per sample)
     interp: str = "linear"                         # "linear" (Proteus draws analogue traces this way) | "hold" (step: value of the last sample)
 
     def with_interp(self, mode: str) -> Probe:
@@ -38,7 +39,7 @@ class Probe:
         """Value at x: linear interpolation (default) or zero-order hold; clamped at the ends."""
         if not self.x:
             return float("nan")
-        if self.interp == "hold":
+        if self.interp == "hold" or self.kind == KIND_DIGITAL:
             j = bisect.bisect_right(self.x, x) - 1
             return self.y[max(j, 0)]
         i = bisect.bisect_left(self.x, x)
@@ -98,9 +99,15 @@ def _curve(data: bytes, start: int, end: int, template: list[Probe]) -> Result:
         while pos + 10 <= end and data[pos:pos + 2] != b"\xff\xff":
             idx = struct.unpack_from("<H", data, pos)[0]
             kind = probes[idx].kind if idx < len(probes) else KIND_REAL
+            rawv = None
             if kind == KIND_COMPLEX:
                 v = complex(*struct.unpack_from("<dd", data, pos + 2))
                 pos += 18
+            elif kind == KIND_DIGITAL:
+                raw = struct.unpack_from("<I", data, pos + 2)[0]
+                v = 1.0 if raw & 2 else 0.0               # bit 1 = logic high (0x15/0x0d low, 0x17/0x0f high); other bits = drive strength
+                pos += 6
+                rawv = raw
             else:
                 v = struct.unpack_from("<d", data, pos + 2)[0]
                 pos += 10
@@ -108,9 +115,13 @@ def _curve(data: bytes, start: int, end: int, template: list[Probe]) -> Result:
                 pr = probes[idx]
                 if pr.x and pr.x[-1] == x:
                     pr.y[-1] = v                      # same x twice: keep the last value
+                    if rawv is not None:
+                        pr.raw[-1] = rawv
                 else:
                     pr.x.append(x)
                     pr.y.append(v)
+                    if rawv is not None:
+                        pr.raw.append(rawv)
     xs = [q.x[0] for q in probes if q.x]
     xe = [q.x[-1] for q in probes if q.x]
     return Result(probes, min(xs) if xs else 0.0, max(xe) if xe else x, recs)
