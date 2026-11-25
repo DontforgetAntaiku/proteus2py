@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import bisect
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 MAGIC = b"LISA PARTITION DATA FILE"
@@ -26,11 +26,21 @@ class Probe:
     kind: int
     x: list[float] = field(default_factory=list)
     y: list = field(default_factory=list)          # float, or complex for AC probes
+    interp: str = "linear"                         # "linear" (Proteus draws analogue traces this way) | "hold" (step: value of the last sample)
 
-    def at(self, x: float) -> float:
-        """Linear interpolation (clamped at the ends)."""
+    def with_interp(self, mode: str) -> Probe:
+        """Copy that evaluates with `mode` ("linear" | "hold")."""
+        if mode not in ("linear", "hold"):
+            raise ValueError("interp: linear | hold")
+        return replace(self, interp=mode)
+
+    def at(self, x: float) -> float | complex:
+        """Value at x: linear interpolation (default) or zero-order hold; clamped at the ends."""
         if not self.x:
             return float("nan")
+        if self.interp == "hold":
+            j = bisect.bisect_right(self.x, x) - 1
+            return self.y[max(j, 0)]
         i = bisect.bisect_left(self.x, x)
         if i == 0:
             return self.y[0]

@@ -239,19 +239,20 @@ def simulate_spice(deck: str, name: str = "sim", analysis_index: int = 0, max_ro
 
 @tool()
 def measure(name: str, what: str, probe: str, f0: float | None = None, x: float | None = None, periods: int = 5,
-            nharm: int = 10, ref: str = "first", after: float = 0.0) -> dict:
+            nharm: int = 10, ref: str = "first", after: float = 0.0, interp: str = "linear") -> dict[str, Any]:
     """Measure on a finished simulate() run. what: stats (min/max/mean/rms) | at (value at x) | bandwidth (-3 dB of an AC probe;
-    ref=first|peak) | harmonics (THD of a transient probe at fundamental f0 over the last `periods` periods) | edge (10-90 % time, overshoot)."""
-    kw = {k: v for k, v in dict(f0=f0, x=x, periods=periods, nharm=nharm, ref=ref, after=after).items() if v is not None}
+    ref=first|peak) | harmonics (THD of a transient probe at fundamental f0 over the last `periods` periods) | edge (10-90 % time, overshoot).
+    interp: "linear" (default, how Proteus draws traces) or "hold" (step between solver samples; use for pulse edges and digital-like signals)."""
+    kw = {k: v for k, v in dict(f0=f0, x=x, periods=periods, nharm=nharm, ref=ref, after=after, interp=interp).items() if v is not None}
     return sim.measure_run(name, what, probe, **kw)
 
 
 @tool()
-def derive(name: str, expr: str, points: int = 40) -> dict:
+def derive(name: str, expr: str, points: int = 40, interp: str = "linear") -> dict[str, Any]:
     """Evaluate an expression of a finished run's probes on a grid, e.g. "db(v(out)/v(in))" (gain), "v(in)/i(R1)" (input impedance),
     "v(a)-v(b)", "v(out)*i(R2)" (power). AC probes are complex (answer gives mag/dB/deg). measure() accepts such expressions as `probe`."""
     with _LOCK:
-        return sim.derive(name, expr, points)
+        return sim.derive(name, expr, points, interp)
 
 
 @tool()

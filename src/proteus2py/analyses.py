@@ -5,12 +5,13 @@ from collections.abc import Callable
 
 from .elements import Ctx
 from .errors import SpecError
-from .models import AcAnalysis, DcAnalysis, NoiseAnalysis, OpAnalysis, TransientAnalysis
+from .models import AcAnalysis, CircuitSpec, DcAnalysis, DistortionAnalysis, NoiseAnalysis, OpAnalysis, TransientAnalysis, Wave
 from .sdf import num
 from .units import to_float
 
 Handler = Callable[..., str]
 REGISTRY: dict[type, Handler] = {}
+PREPARE: dict[type, Callable[[CircuitSpec], CircuitSpec]] = {}     # spec rewrites that must happen before elements are translated
 
 
 def analysis(cls: type) -> Callable[[Handler], Handler]:
@@ -55,6 +56,32 @@ def _noise(ctx: Ctx, a: NoiseAnalysis) -> str:
                          LOGSPECTRAL="FALSE", LOGTOTAL="TRUE", FREQREF=src)
     ctx.sdf.props[a.mode.upper()] = "TRUE"
     return "noise"
+
+
+def _prepare_distortion(spec: CircuitSpec) -> CircuitSpec:
+    a = spec.analysis
+    assert isinstance(a, DistortionAnalysis)
+    src = next((p for p in spec.parts if p.ref == a.source), None)
+    if src is None or src.kind != "V":
+        raise SpecError(f"distortion: source {a.source!r} must be a V part")
+    wave = src.wave.model_dump(exclude_none=True) if src.wave else {"type": "sine"}
+    if wave["type"] != "sine":
+        raise SpecError("distortion: the source must be a sine wave")
+    wave["freq"] = a.f0
+    if a.amplitude is not None:
+        wave["amp"] = a.amplitude
+    parts = [p.model_copy(update={"wave": Wave(**wave)}) if p.ref == a.source else p for p in spec.parts]
+    return spec.model_copy(update={"parts": parts, "options": {"RELTOL": "1e-5", **spec.options}, "probes": [f"v({a.output})"]})
+
+
+PREPARE[DistortionAnalysis] = _prepare_distortion
+
+
+@analysis(DistortionAnalysis)
+def _distortion(ctx: Ctx, a: DistortionAnalysis) -> str:
+    f0 = to_float(a.f0)
+    ctx.sdf.props.update(SIMTYPE="TRANSIENT", TSTART="0", TSTOP=num((a.settle + a.periods) / f0), TMAX=num(1 / (f0 * 256)))
+    return "distortion"
 
 
 @analysis(DcAnalysis)

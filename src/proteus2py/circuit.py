@@ -124,6 +124,9 @@ def _add_probes(ctx: Ctx, want: list[str]) -> list[tuple[str, str]]:
 
 def build(spec: dict[str, Any] | CircuitSpec) -> Built:
     sp = couple(validate(spec))
+    prep = analyses.PREPARE.get(type(sp.analysis))
+    if prep:
+        sp = prep(sp)
     if not sp.parts:
         raise SpecError("no parts")
     refs = {p.ref for p in sp.parts}

@@ -37,6 +37,12 @@ def simulate(spec: dict[str, Any] | CircuitSpec, name: str = "sim", max_rows: in
     elif t == "transient":
         out["stats"] = {p.name: measure.stats(p) for p in res.probes if p.y}
         out["table"] = measure.table(res, n=max_rows)
+    elif t == "distortion":
+        an = spec.analysis
+        h = measure.harmonics(res.probes[0], to_float(an.f0), an.periods, None, an.nharm + 1)
+        rel = [100 * a / h["fund"] for a in h["h"][1:]]
+        out["distortion"] = {"f0": to_float(an.f0), "dc": h["dc"], "fundamental": h["fund"], "harmonics": h["h"][1:], "harmonics_rel_pct": rel, "thd_pct": h["thd_pct"]}
+        out["table"] = measure.table(res, n=max_rows)
     elif t == "noise":
         # ProSPICE stores noise as complex: real = output noise density [V/rtHz], imag = input-referred density [V/rtHz]
         p0 = res.probes[0]
@@ -80,10 +86,11 @@ def get(name: str) -> dict[str, Any]:
 
 def measure_run(name: str, what: str, probe: str, **kw: Any) -> dict[str, Any]:
     r = get(name)["result"]
+    mode = kw.pop("interp", "linear") or "linear"            # linear (Proteus's drawing) | hold (step between samples)
     try:
-        p = r.probe(probe)
+        p = r.probe(probe).with_interp(mode)
     except KeyError:
-        p = measure.derived(r, probe)                        # expression such as db(v(out)/v(in)) or v(in)/i(R1)
+        p = measure.derived(r, probe, interp=mode)           # expression such as db(v(out)/v(in)) or v(in)/i(R1)
     what = what.lower()
     if what == "stats":
         return measure.stats(p)
@@ -137,10 +144,10 @@ def plot(name: str, probes: list[str] | None, file_name: str, title: str | None 
     return out
 
 
-def derive(name: str, expr: str, n: int = 40) -> dict:
+def derive(name: str, expr: str, n: int = 40, interp: str = "linear") -> dict[str, Any]:
     """Table of an expression of the run's probes, e.g. "db(v(out)/v(in))", "v(in)/i(R1)" (input impedance)."""
     r = get(name)["result"]
-    p = measure.derived(r, expr, n=max(n, 2))
+    p = measure.derived(r, expr, n=max(n, 2), interp=interp)
     ac = get(name)["analysis"] == "ac"
     if p.complex:
         return {"expr": expr, "columns": ["x", "mag", "dB", "deg"],

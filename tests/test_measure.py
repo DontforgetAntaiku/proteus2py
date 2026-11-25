@@ -42,3 +42,26 @@ def test_nested_dc_sweep_family():
     ic = [c.probe("i(VCE)") for c in r.family]
     assert ic[0].x[0] == 0.0 and ic[0].x[-1] == pytest.approx(10.0)
     assert abs(ic[-1].y[-1]) > abs(ic[0].y[-1]) * 3     # collector current grows with base current
+
+
+def test_hold_interpolation_keeps_steps():
+    p = pdf.Probe(0, "s", "s", 8)
+    p.x, p.y = [0.0, 1.0, 1.0001, 2.0], [0.0, 0.0, 5.0, 5.0]       # sparse samples around an edge
+    assert p.at(0.5) == 0.0
+    h = p.with_interp("hold")
+    assert h.at(1.00005) == 0.0 and h.at(1.5) == 5.0 and h.at(-1) == 0.0
+    assert p.at(1.00005) == pytest.approx(2.5, rel=1e-3)             # linear interpolation draws the edge as a ramp
+    with pytest.raises(ValueError):
+        p.with_interp("cubic")
+
+
+def test_numpy_and_python_harmonics_agree():
+    np = pytest.importorskip("numpy")
+    p = pdf.Probe(0, "s", "s", 8)
+    f, n = 1000.0, 5000
+    p.x = [i * 6e-3 / n for i in range(n + 1)]
+    p.y = [math.sin(2 * math.pi * f * t) + 0.02 * math.sin(2 * math.pi * 3 * f * t) + 0.3 for t in p.x]
+    fast = measure.harmonics(p, f, periods=4)
+    slow = measure.harmonics(p.with_interp("hold"), f, periods=4)             # hold forces the pure-Python path
+    assert np.isclose(fast["thd_pct"], 2.0, rtol=0.02) and abs(fast["thd_pct"] - slow["thd_pct"]) < 0.05
+    assert fast["dc"] == pytest.approx(0.3, abs=2e-3)

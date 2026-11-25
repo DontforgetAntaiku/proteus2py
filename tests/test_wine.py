@@ -90,3 +90,16 @@ def test_current_switch_and_b_source_with_branch_current():
     assert r.op["v(out)"] == pytest.approx(1.0, abs=0.01)
     r = sim.simulate(spice.parse("t\nV1 a 0 2\nVS s 0 0\nR1 a s 1k\nB1 x 0 V=3000*i(VS)\nR2 x 0 1k\n.op\n"), "it_bi")
     assert r.op["v(x)"] == pytest.approx(6.0, rel=1e-3)               # i(VS) = 2 mA
+
+
+def test_distortion_analysis_of_a_clipping_stage():
+    from proteus2py import sim
+    spec = {"parts": [{"ref": "V1", "kind": "V", "nodes": ["in", "0"], "wave": {"type": "sine", "amp": 0.1, "freq": 1000}},
+                      {"ref": "R1", "kind": "R", "nodes": ["in", "out"], "value": "1k"},
+                      {"ref": "D1", "kind": "D", "nodes": ["out", "0"], "model": "1N4148"}],
+            "analysis": {"type": "distortion", "output": "out", "source": "V1", "f0": 1000, "periods": 8, "settle": 2}}
+    r = sim.simulate(spec, "it_dist")
+    d = r.distortion
+    assert d is not None and d.fundamental == pytest.approx(0.1, rel=0.02)     # the diode barely conducts at 0.1 V: nearly linear
+    clipped = sim.simulate({**spec, "parts": [{**spec["parts"][0], "wave": {"type": "sine", "amp": 3, "freq": 1000}}, *spec["parts"][1:]]}, "it_dist2")
+    assert clipped.distortion.thd_pct > 5 * d.thd_pct and clipped.distortion.harmonics_rel_pct[0] > 1   # 2nd harmonic from half-wave clipping

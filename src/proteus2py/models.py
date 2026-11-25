@@ -93,7 +93,20 @@ class NoiseAnalysis(_Strict):
     mode: Literal["dec", "oct", "lin"] = "dec"
 
 
-Analysis = Annotated[OpAnalysis | TransientAnalysis | AcAnalysis | DcAnalysis | NoiseAnalysis, Field(discriminator="type")]
+class DistortionAnalysis(_Strict):
+    """Harmonic distortion of `output` driven by the sine source `source` at f0: a steady-state transient plus a Fourier analysis
+    (`settle` periods are discarded, `periods` are analysed)."""
+    type: Literal["distortion"] = "distortion"
+    output: str
+    source: str
+    f0: Number
+    amplitude: Number | None = None
+    periods: int = 10
+    settle: int = 5
+    nharm: int = 9
+
+
+Analysis = Annotated[OpAnalysis | TransientAnalysis | AcAnalysis | DcAnalysis | NoiseAnalysis | DistortionAnalysis, Field(discriminator="type")]
 
 
 class ModelDef(_Strict):
@@ -152,6 +165,15 @@ class NoiseSummary(BaseModel):
     total_input_rms_V: float
 
 
+class Distortion(BaseModel):
+    f0: float
+    dc: float
+    fundamental: float
+    harmonics: list[float]                  # amplitudes of harmonics 2..n+1 (V)
+    harmonics_rel_pct: list[float]          # relative to the fundamental, in percent
+    thd_pct: float
+
+
 class Curve(BaseModel):
     outer: float
     table: Table
@@ -160,7 +182,7 @@ class Curve(BaseModel):
 class SimResult(BaseModel):
     """Answer of simulate / simulate_spice / run_sdf. Exactly one of op / stats / gain / noise is filled, depending on the analysis."""
     name: str
-    analysis: Literal["op", "transient", "ac", "dc", "noise"]
+    analysis: Literal["op", "transient", "ac", "dc", "noise", "distortion"]
     probes: list[str]
     x_range: tuple[float, float]
     warnings: list[str] = Field(default_factory=list)
@@ -171,6 +193,7 @@ class SimResult(BaseModel):
     stats: dict[str, Stats] | None = None
     gain: dict[str, GainSummary] | None = None
     noise: NoiseSummary | None = None
+    distortion: Distortion | None = None
     table: Table | None = None
     family: list[Curve] | None = None
     partition: str | None = None

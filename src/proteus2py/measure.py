@@ -6,6 +6,7 @@ import csv
 import math
 import re
 from pathlib import Path
+from typing import Any
 
 from .pdf import Probe, Result
 
@@ -36,24 +37,35 @@ def uniform(p: Probe, x0: float, x1: float, n: int) -> tuple[list[float], list[f
     return xs, [p.at(x).real if isinstance(p.at(x), complex) else p.at(x) for x in xs]
 
 
-def harmonics(p: Probe, f0: float, periods: int = 5, start: float | None = None, nharm: int = 10, spp: int = 256) -> dict:
+def harmonics(p: Probe, f0: float, periods: int = 5, start: float | None = None, nharm: int = 10, spp: int = 256) -> dict[str, Any]:
     """Fourier components at k*f0 over `periods` whole periods ending at the last time point (steady state).
-    Returns {"fund": amplitude, "h": [amp k=1..nharm], "thd_pct": ..., "dc": ...}."""
+    Returns {"fund": amplitude, "h": [amp k=1..nharm], "thd_pct": ..., "dc": ...}. Uses numpy when installed (much faster), else pure Python."""
     T = 1.0 / f0
     t1 = p.x[-1]
     t0 = (t1 - periods * T) if start is None else start
     if t0 < p.x[0]:
         raise ValueError(f"signal too short: need {periods} periods of {f0} Hz (have {p.x[-1] - p.x[0]:g} s)")
     n = periods * spp
-    ts = [t0 + i * (periods * T) / n for i in range(n)]
-    ys = [p.at(t) for t in ts]
-    dc = sum(ys) / n
-    amps = []
-    for k in range(1, nharm + 1):
-        w = 2 * math.pi * k * f0
-        re = sum(y * math.cos(w * (t - t0)) for t, y in zip(ts, ys)) * 2 / n
-        im = sum(y * math.sin(w * (t - t0)) for t, y in zip(ts, ys)) * 2 / n
-        amps.append(math.hypot(re, im))
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    if np is not None and p.interp == "linear" and not p.complex:
+        ts = t0 + np.arange(n) * (periods * T) / n
+        ys = np.interp(ts, np.asarray(p.x), np.asarray(p.y, dtype=float))
+        dc = float(ys.mean())
+        spec = np.fft.rfft(ys) / n * 2                     # bin k*periods is harmonic k (whole periods)
+        amps = [float(abs(spec[k * periods])) for k in range(1, nharm + 1) if k * periods < len(spec)]
+    else:
+        ts_l = [t0 + i * (periods * T) / n for i in range(n)]
+        ys_l = [p.at(t) for t in ts_l]
+        dc = sum(ys_l) / n
+        amps = []
+        for k in range(1, nharm + 1):
+            w = 2 * math.pi * k * f0
+            re_ = sum(y * math.cos(w * (t - t0)) for t, y in zip(ts_l, ys_l)) * 2 / n
+            im_ = sum(y * math.sin(w * (t - t0)) for t, y in zip(ts_l, ys_l)) * 2 / n
+            amps.append(math.hypot(re_, im_))
     fund = amps[0]
     thd = 100 * math.sqrt(sum(a * a for a in amps[1:])) / fund if fund > 0 else float("nan")
     return {"dc": dc, "fund": fund, "h": amps, "thd_pct": thd, "window": [t0, t1], "note": "interpolated from solver steps"}
@@ -151,7 +163,7 @@ _FUN = {"abs": abs, "mag": abs, "db": lambda z: 20 * math.log10(max(abs(z), 1e-3
         "ln": lambda z: math.log(abs(z)), "exp": cmath.exp, "sin": cmath.sin, "cos": cmath.cos, "pi": math.pi}
 
 
-def derived(res: Result, expr: str, n: int = 400, log: bool | None = None) -> Probe:
+def derived(res: Result, expr: str, n: int = 400, log: bool | None = None, interp: str = "linear") -> Probe:
     """Evaluate an expression of probes over a grid -> a virtual Probe usable by every measure function.
     Functions: db mag ph re im abs sqrt log10 ln exp sin cos. Complex (AC) probes stay complex."""
     names = {m.group(0): m for m in _ID.finditer(expr)}
@@ -159,7 +171,7 @@ def derived(res: Result, expr: str, n: int = 400, log: bool | None = None) -> Pr
     code = expr
     for i, (text, m) in enumerate(sorted(names.items(), key=lambda kv: -len(kv[0]))):
         key = f"_p{i}"
-        used.append((key, res.probe(f"{m.group(1).lower()}({m.group(2)})")))
+        used.append((key, res.probe(f"{m.group(1).lower()}({m.group(2)})").with_interp(interp)))
         code = code.replace(text, key)
     if not used:
         raise ValueError(f"expression {expr!r} contains no v(..)/i(..) probes")
@@ -182,6 +194,6 @@ def derived(res: Result, expr: str, n: int = 400, log: bool | None = None) -> Pr
     cplx = any(isinstance(y, complex) and abs(y.imag) > 0 for y in ys)
     if not cplx:
         ys = [y.real if isinstance(y, complex) else float(y) for y in ys]
-    pr = Probe(0, expr, expr, 16 if cplx else 8)
+    pr = Probe(0, expr, expr, 16 if cplx else 8, interp=interp)
     pr.x, pr.y = xs_all, ys
     return pr
