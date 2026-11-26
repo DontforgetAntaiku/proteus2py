@@ -59,6 +59,7 @@ static void run(const char *cmd, char *args, char *out) {
         if (Module32First(s, &m)) do put(out, "%p %lx %s\n", m.modBaseAddr, (unsigned long)m.modBaseSize, m.szModule); while (Module32Next(s, &m));
         CloseHandle(s);
     } else if (!strcmp(cmd, "windows")) EnumWindows(enum_win, (LPARAM)out);
+    else if (!strcmp(cmd, "scratch")) { static unsigned char buf[4096]; put(out, "%p", buf); }
     else if (!strcmp(cmd, "mod")) { HMODULE m = GetModuleHandleA(args); put(out, "%p", m); }
     else if (!strcmp(cmd, "gmi")) {                       /* gmi <name|-> <flags hex>: getmoduleinterface from APPFRAME.DLL */
         typedef void *(__cdecl *Gmi)(const char *, unsigned);
