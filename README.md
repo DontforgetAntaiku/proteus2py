@@ -26,6 +26,8 @@ Proteus is a capable simulator many universities teach with, but it has no scrip
 - **Measurements.** -3 dB bandwidth, THD, rise time, expressions of probes (`db(v(out)/v(in))`, input impedance), parameter sweeps, Monte Carlo, plots.
 - **Proteus's own pictures.** Open a real `.pdsprj`, run its graph, get the full-size Proteus graph as an image, or bridge it to numbers
   (`simulate_project` captures the netlist ISIS hands to ProSPICE and re-runs it headless).
+- **Proteus-authored results.** For readers who only trust Proteus: `build_native` makes Proteus itself place any library device, draw the wires and graphs
+  (an injected hook verifies every step), and `evidence` exports the numbers (`.dat`), graph views and screenshots with SHA-256 checksums. See [docs/native.md](docs/native.md).
 - **AI-ready.** An MCP server lets an assistant build, simulate and measure circuits.
 - **Safe.** Everything runs in a bubblewrap sandbox (no network, empty `$HOME`); the GUI (Xvfb + Wine + Proteus) exists only for the duration of one call.
 
@@ -58,7 +60,7 @@ ideal transformer ratio, TL072/LM324 library macromodels, current/voltage-contro
 
 ## Limits
 Linux only (Wine + bubblewrap). Digital/mixed-mode parts, microcontroller (VSM) models, `.INCLUDE` of host files and the distortion card are not supported yet.
-Opening the GUI costs 15-40 s per call. `build_design` writes projects only for a small device set. Details: [docs/MCP.md](docs/MCP.md),
+Opening the GUI costs 15-40 s per call. `build_design` writes projects only for a small device set; `build_native` has no such limit but is slow (minutes) and needs the hook (`make -C native`, mingw). Details: [docs/MCP.md](docs/MCP.md),
 [docs/NOTES_prospice.md](docs/NOTES_prospice.md), [docs/PDSPRJ.md](docs/PDSPRJ.md).
 
 ## Contributing, license
