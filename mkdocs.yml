@@ -6,6 +6,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Analyses and elements: analyses.md
+  - Proteus-authored results: native.md
   - MCP tools: tools.md
   - An assistant session: transcript.md
   - Windows: windows.md

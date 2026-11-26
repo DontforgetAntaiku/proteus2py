@@ -249,6 +249,15 @@ class GenResult(BaseModel):
     conflicts: list[str]                    # geometric clashes between different nets (must be empty)
 
 
+class NativeBuild(BaseModel):
+    """Answer of build_native: a project whose schematic Proteus itself drew."""
+    project: str
+    path: str
+    parts: dict[str, str]                  # spec id -> reference Proteus assigned
+    wires: int
+    problems: list[str]                    # empty when the saved project matches the request
+
+
 class EvidenceFile(BaseModel):
     kind: str                              # screenshot | graph_view | graph_data | project
     path: str

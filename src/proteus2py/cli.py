@@ -28,6 +28,12 @@ def _doctor() -> int:
     print(f"  Wine prefix with Proteus: {'ok' if pristine.exists() else 'MISSING (run: proteus2py setup <prefix>)'}")
     ok &= pristine.exists()
     try:
+        from . import native
+        native.native_dir()
+        print("  native hook (p2hook.dll): ok (build_native available)")
+    except Exception:
+        print("  native hook (p2hook.dll): not built (build_native unavailable; `make -C native`, needs i686-w64-mingw32-gcc)")
+    try:
         import matplotlib  # noqa: F401
         print("  matplotlib: ok (plot_run available)")
     except ImportError:

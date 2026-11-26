@@ -120,3 +120,18 @@ def test_digital_gates_and_latch():
                       "analysis": {"type": "transient", "tstop": "400n", "tmax": "10n"}, "probes": ["d(q)"]}, "it_not")
     p = sim.get("it_not")["result"].probe("d(q)")
     assert [int(p.at((i * 100 + 60) * 1e-9)) for i in range(4)] == [1, 1, 0, 0]
+
+
+def test_native_build_two_gates():
+    """Proteus itself places two gates and draws a wire; the saved project is read back with our DSN reader."""
+    import zipfile
+
+    from proteus2py import native
+    from proteus2py import workspace as ws
+    from proteus2py.dsn import reader
+
+    r = native.build_native("it_native", [{"id": "U1", "device": "74HC00", "x": 2000, "y": -100}, {"id": "U2", "device": "74HC00", "x": 3000, "y": -100}],
+                            [{"from": "U1.Y", "to": "U2.A"}])
+    assert r.problems == [] and r.wires >= 1
+    d = reader.parse_dsn(zipfile.ZipFile(ws.project("it_native")).read("ROOT.DSN"))
+    assert sum(1 for o in d.objects if o.get("device") == "74HC00") == 2

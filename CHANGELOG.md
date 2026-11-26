@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- **Proteus-authored schematics** (`build_native`, `proteus2py.native`): an injected hook (`native/`, i686 mingw DLL, file transport) lets Proteus itself
+  place any library device (real Pick Devices), draw wires with its wire tool, place generators/probes/terminals, edit values and sine generators,
+  draw graphs with traces and simulate them. Every step is verified through Proteus' own object model and the saved `.pdsprj`.
+- `evidence` tool: results exactly as Proteus produces them (Export Graph Data `.dat`, graph views, schematic screenshots, SHA-256 manifest).
 - Typed core: pydantic circuit spec (strict validation) and typed results; element/analysis/SPICE-element registries; `py.typed`; ruff incl. annotations.
 - New: distortion analysis, `W` switches, `i()` inside `B` sources, digital gates / generic DSIM parts / pattern generators / `d()` probes,
   `interp="hold"`, numpy-accelerated harmonics, netlist cache for `simulate_project`.

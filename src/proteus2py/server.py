@@ -16,7 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import gen, gui, project, prospice, session, sim, spice
 from . import workspace as ws
-from .models import Evidence, EvidenceFile, GenResult, GraphData, MonteCarloResult, ProjectRunResult, SimResult, SweepResult
+from .models import Evidence, EvidenceFile, GenResult, GraphData, MonteCarloResult, NativeBuild, ProjectRunResult, SimResult, SweepResult
 
 mcp = MCPServer("proteus")
 
@@ -85,6 +85,23 @@ def build_design(name: str, parts: list[dict[str, Any]], wires: list[dict[str, A
     Experimental: new designs may fail to load in Proteus; verify with open_project + screenshot."""
     with _LOCK:
         return gen.build(ws.project(name), parts, wires)
+
+
+@tool()
+def build_native(name: str, parts: list[dict[str, Any]], wires: list[dict[str, Any]], graphs: list[dict[str, Any]] | None = None,
+                 max_seconds: float = 900) -> NativeBuild:
+    """Build a project with Proteus ITSELF (real Pick Devices, placement, wire tool, graphs) so every number later comes from Proteus.
+    Any library device works. Takes minutes; the whole GUI lives only inside this call. Follow with `evidence` to export results.
+    parts: {"id","device","x","y"[,"value","ref","props":{K:V}]} (thou; device = exact Proteus device name, e.g. RES CAP 74HC00 LM358);
+           {"id","kind":"generator","device":"SINE|DC|PULSE|...","x","y"[,"name","amplitude","frequency","offset","phase"]} (edit = sine only),
+           {"id","kind":"probe","device":"VOLTAGE|CURRENT"}, {"id","kind":"terminal","device":"GROUND|POWER|INPUT|OUTPUT|..."},
+           {"id","kind":"instrument","device":"OSCILLOSCOPE|..."}. Keep clear of (-1500,1500): the start project's logic state used for calibration.
+    wires: {"from":"R1.0","to":"C1.1"}  pin = name or index (generators/probes/terminals: 0 or GND). Pins are real connection points.
+    graphs: {"type":"ANALOGUE","x1","y1","x2","y2"[,"title","start","stop"],"traces":[{"name":"Vout","probes":["P1"]}]} (probes = part ids)."""
+    from . import native
+    with _LOCK:
+        r = native.build_native(name, parts, wires, graphs, max_seconds=max_seconds)
+    return NativeBuild(project=r.project, path=r.path, parts=r.parts, wires=r.wires, problems=r.problems)
 
 
 # ---- GUI (one-shot: Xvfb + Wine + Proteus live inside the sandbox only for the duration of ONE call) ------------------

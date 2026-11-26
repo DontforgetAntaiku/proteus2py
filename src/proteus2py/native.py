@@ -208,7 +208,7 @@ class Native:
                                    g.point(lambda v: 255 if v < 60 else 0))
         small = mask.resize((mask.width // 13, mask.height // 13), Image.BOX)       # density map: the filled logic state is the densest cell
         px_ = small.load()
-        best = max(((px_[x, y], x, y) for x in range(small.width) for y in range(small.height)))
+        best = max((px_[x, y], x, y) for x in range(small.width) for y in range(small.height))
         if best[0] < 60:
             raise NativeError("view calibration failed: the start project's logic state is not on screen")
         cx, cy = best[1] * 13 + 6, best[2] * 13 + 6
@@ -506,9 +506,10 @@ def build_native(name: str, parts: list[dict[str, Any]], wires: list[dict[str, A
               "traces": [{"name": "Vout", "probes": ["P1"]}]}]   (probes = ids of probe/generator parts)
     base  : an existing, nearly empty project to start from (default: a one-part template written by the generator)
     """
+    import zipfile
+
     from . import gen
     from .dsn import reader
-    import zipfile
 
     out = ws.project(name)
     src = ws.project(base) if base else ws.exchange() / "_native_base.pdsprj"

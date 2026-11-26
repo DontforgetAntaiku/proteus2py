@@ -19,3 +19,6 @@ uv.lock
 docs/HANDOFF.md
 !tests/data/*.PDF
 site/
+native/*.dll
+native/*.exe
+src/proteus2py/_native/

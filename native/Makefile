@@ -7,3 +7,8 @@ p2launch.exe: launch.c
 	$(CC) $(CFLAGS) -static-libgcc -o $@ launch.c
 clean:
 	rm -f *.dll *.exe
+
+# put the build into the Python package so `python -m build` ships it in the wheel (CI does this before building)
+package: all
+	mkdir -p ../src/proteus2py/_native
+	cp p2hook.dll p2launch.exe ../src/proteus2py/_native/

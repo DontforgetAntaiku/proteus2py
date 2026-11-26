@@ -44,9 +44,10 @@ Changelog = "https://github.com/DontforgetAntaiku/proteus2py/blob/main/CHANGELOG
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/proteus2py"]
+artifacts = ["src/proteus2py/_native/*"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/proteus2py", "tests", "docs", "examples", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
+include = ["src/proteus2py", "native/hook.c", "native/launch.c", "native/Makefile", "tests", "docs", "examples", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

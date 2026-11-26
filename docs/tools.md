@@ -16,6 +16,25 @@ Generate a project from seed templates. parts: [{"id":"U1","kind":"6116","x":-34
 | `parts` | array |
 | `wires` | array |
 
+## `build_native`
+
+Build a project with Proteus ITSELF (real Pick Devices, placement, wire tool, graphs) so every number later comes from Proteus.
+    Any library device works. Takes minutes; the whole GUI lives only inside this call. Follow with `evidence` to export results.
+    parts: {"id","device","x","y"[,"value","ref","props":{K:V}]} (thou; device = exact Proteus device name, e.g. RES CAP 74HC00 LM358);
+           {"id","kind":"generator","device":"SINE|DC|PULSE|...","x","y"[,"name","amplitude","frequency","offset","phase"]} (edit = sine only),
+           {"id","kind":"probe","device":"VOLTAGE|CURRENT"}, {"id","kind":"terminal","device":"GROUND|POWER|INPUT|OUTPUT|..."},
+           {"id","kind":"instrument","device":"OSCILLOSCOPE|..."}. Keep clear of (-1500,1500): the start project's logic state used for calibration.
+    wires: {"from":"R1.0","to":"C1.1"}  pin = name or index (generators/probes/terminals: 0 or GND). Pins are real connection points.
+    graphs: {"type":"ANALOGUE","x1","y1","x2","y2"[,"title","start","stop"],"traces":[{"name":"Vout","probes":["P1"]}]} (probes = part ids).
+
+| parameter | type |
+|---|---|
+| `name` | string |
+| `parts` | array |
+| `wires` | array |
+| `graphs` | array/null |
+| `max_seconds` | number |
+
 ## `derive`
 
 Evaluate an expression of a finished run's probes on a grid, e.g. "db(v(out)/v(in))" (gain), "v(in)/i(R1)" (input impedance),
@@ -60,7 +79,8 @@ Open a Proteus project in the sandbox, perform `actions`, return the screenshots
       {"do":"wait","s":5} | {"do":"click","x":1200,"y":560} | {"do":"click_design","x":-1900,"y":-1000} (thou; toggles a LOGICSTATE/DIP switch)
       {"do":"key","keys":"F12"} | {"do":"type","text":"..."} | {"do":"simulate","mode":"graph|animated","graph":2,"wait":15}
       {"do":"view_graph","index":0,"name":"g"} (double-click the graph title bar: full-size Proteus graph; picture returned)
-      {"do":"export_graph_data","name":"x"} (Proteus writes the selected graph's data to exchange/x.dat) | {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
+      {"do":"export_graph_data","name":"x"} (Proteus writes the selected graph's data to exchange/x.dat) |
+      {"do":"close_graph"} | {"do":"windows"} | {"do":"dismiss","keys":"Return"} (close an error/recovery dialog) | {"do":"screenshot","name":"shot","trim":true,"crop":[x0,y0,x1,y1]}
     Screen is 1920x1080. A screenshot is always appended at the end.
 
 | parameter | type |
