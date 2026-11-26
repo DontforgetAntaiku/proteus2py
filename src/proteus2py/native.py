@@ -98,6 +98,7 @@ class Comp:
     y: float
     ref: str
     pins: list[Pin] = field(default_factory=list)
+    device: str = ""
 
     def tip(self, pin: str, along: float = PIN_LEN) -> tuple[float, float]:
         """Absolute point on the pin line `along` thou outside the pin base (the end of the line is the connection point)."""
@@ -165,7 +166,7 @@ class Native:
                     px_, py_ = struct.unpack("<ii", h.peek(pp + 4, 8))
                     pins.append(Pin(h.cstr(h.vcall(obj, 0x98, i)), px_ / 2540, py_ / 2540))
                 ref = h.cstr(obj + 0x44, 16)
-                out.append(Comp(obj, cls, x / 2540, y / 2540, ref, pins))
+                out.append(Comp(obj, cls, x / 2540, y / 2540, ref, pins, h.cstr(sym + 4, 40)))
             node = h.u32(obj + 0x10)
         return out
 
@@ -180,34 +181,83 @@ class Native:
         self.s.click(170, 152)
         self.s.sleep(0.5)
 
-    def place(self, device: str, x: float, y: float) -> Comp:
-        """Pick `device` from Proteus' library (Pick Devices dialog) and place it with its origin at (x, y) thou."""
+    def _pick(self, device: str, flip_sort: bool = False) -> None:
+        """Pick Devices: search, sort by name, jump to the exact name with type-ahead, OK."""
         s = self.s
-        before = len(self.components())
-        self._arrow_tool()
-        s.click(800, 800)                             # deselect: a pick silently does nothing while something is selected
-        s.sleep(0.8)
         s.key("p")
         s.sleep(2.5)
         s.type(device)
         s.sleep(3)
-        s.double_click(420, 157)                      # first result row
-        s.sleep(2)
-        s.key("Return")
-        s.sleep(2)
-        X, Y = px(x, y)
-        for i in range(4):                            # the first click after the dialog only focuses the canvas
-            self._xdo(f"mousemove {X + i % 2} {Y} sleep 0.5 click 1")
+        if flip_sort:                                  # the sort order may persist between dialogs
+            s.click(410, 141)
             s.sleep(1.5)
-            c = self.find(x, y)
-            if c is not None and len(self.components()) > before:
+        s.click(410, 141)                              # header "Device": sort by device name
+        s.sleep(2)
+        s.click(420, 159)
+        s.sleep(0.8)
+        s.type(device)                                 # type-ahead selects the first row starting with this name
+        s.sleep(1.5)
+        s.click(1711, 916)                             # OK
+        s.sleep(2)
+
+    def place(self, device: str, x: float, y: float) -> Comp:
+        """Pick `device` from Proteus' library (Pick Devices dialog) and place it with its origin at (x, y) thou."""
+        s = self.s
+        for attempt in range(3):
+            before = len(self.components())
+            self._arrow_tool()
+            s.click(800, 800)                         # deselect: a pick silently does nothing while something is selected
+            s.sleep(0.8)
+            self._pick(device, flip_sort=attempt == 1)
+            X, Y = px(x, y)
+            c = None
+            for i in range(4):                        # the first click after the dialog only focuses the canvas
+                self._xdo(f"mousemove {X + i % 2} {Y} sleep 0.5 click 1")
+                s.sleep(1.5)
+                c = self.find(x, y)
+                if c is not None and len(self.components()) > before:
+                    break
+            else:
+                raise NativeError(f"could not place {device} at ({x},{y})")
+            s.key("Escape")
+            s.sleep(0.5)
+            self._arrow_tool()
+            if c.device.upper() == device.upper():
+                return c
+            s.key("ctrl+z")                           # wrong device picked: undo and try the other sort order
+            s.sleep(1.5)
+        raise NativeError(f"Proteus placed {c.device!r} instead of {device!r}")
+
+    def edit(self, c: Comp, value: str | None = None, ref: str | None = None, props: dict[str, str] | None = None) -> None:
+        """Edit Component dialog: part reference, part value and 'other properties' (NAME=value lines)."""
+        s = self.s
+        x, y = px(c.x, c.y)
+        for dx, dy in ((0, 0), (-25, 0), (0, 12), (25, 0), (0, -12)):
+            s.click(x + dx, y + dy)                    # select the part, then Edit Properties
+            s.sleep(0.8)
+            s.key("ctrl+e")
+            s.sleep(2.5)
+            if any("Edit Component" in w for w in s.windows()):
                 break
+            if any(w.startswith("Edit ") for w in s.windows()):
+                s.key("Escape")                     # some other editor (e.g. the label) opened
+                s.sleep(1)
         else:
-            raise NativeError(f"could not place {device} at ({x},{y})")
-        s.key("Escape")
-        s.sleep(0.5)
-        self._arrow_tool()
-        return c
+            raise NativeError(f"no Edit Component dialog for {c.ref}")
+        if ref is not None:
+            s.click(870, 363)
+            s.key("ctrl+a")
+            s.type(ref)
+        if value is not None:
+            s.click(870, 386)
+            s.key("ctrl+a")
+            s.type(value)
+        if props:
+            s.click(840, 555)
+            s.key("ctrl+End")
+            s.type("".join(f"\n{k}={v}" for k, v in props.items()))
+        s.click(1097, 365)                            # OK
+        s.sleep(1.5)
 
     def wire(self, a: tuple[float, float], b: tuple[float, float]) -> None:
         """Draw a wire between two points on pin lines with the real wire tool (click, click)."""
@@ -236,7 +286,8 @@ def build_native(name: str, parts: list[dict[str, Any]], wires: list[dict[str, A
                  progress: Callable[[str], None] | None = None, max_seconds: float = 900) -> NativeResult:
     """Create `name`.pdsprj with Proteus itself.
 
-    parts : [{"id": "U1", "device": "74HC00", "x": 2000, "y": -100}, ...]   (device = Proteus library device name)
+    parts : [{"id": "U1", "device": "74HC00", "x": 2000, "y": -100, "value": "10k", "ref": "R1", "props": {"TOL": "1%"}}, ...]
+            (device = Proteus library device name; value/ref/props optional)
     wires : [{"from": "U1.Y", "to": "U2.A"}, ...]
     base  : an existing, nearly empty project to start from (default: a one-part template written by the generator)
     """
@@ -256,6 +307,9 @@ def build_native(name: str, parts: list[dict[str, Any]], wires: list[dict[str, A
         for p in parts:
             say(f"place {p['id']} = {p['device']}")
             placed[p["id"]] = nat.place(p["device"], p["x"], p["y"])
+            if any(k in p for k in ("value", "ref", "props")):
+                nat.edit(placed[p["id"]], p.get("value"), p.get("ref"), p.get("props"))
+                placed[p["id"]] = nat.find(p["x"], p["y"]) or placed[p["id"]]
         for w in wires:
             (ia, pa), (ib, pb) = w["from"].split("."), w["to"].split(".")
             say(f"wire {w['from']} -> {w['to']}")
